@@ -26,6 +26,7 @@ pub fn build_router(state: AppState) -> Router {
 
     Router::new()
         .nest("/api/v1", api)
+        .fallback(crate::embed::serve_static)
         .with_state(state)
 }
 
