@@ -1,0 +1,18 @@
+[tools]
+node = "24"
+
+[tasks.install]
+description = "Install npm dependencies"
+run = "npm install"
+
+[tasks.dev]
+description = "Start SvelteKit dev server"
+run = "npm run dev"
+
+[tasks.build]
+description = "Build static assets"
+run = "npm run build"
+
+[tasks.preview]
+description = "Preview the static build"
+run = "npm run preview"

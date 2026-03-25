@@ -1,0 +1,63 @@
+:root {
+  --color-bg: #0f1117;
+  --color-surface: #1a1d27;
+  --color-border: #2a2d3a;
+  --color-text: #e2e8f0;
+  --color-text-muted: #8892a4;
+  --color-accent: #7c6af7;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  --status-pending: #6b7280;
+  --status-in_progress: var(--color-info);
+  --status-pr_created: var(--color-success);
+  --status-needs_human: var(--color-warning);
+  --status-failed: var(--color-error);
+  --status-skipped: #4b5563;
+
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  min-height: 100vh;
+}
+
+a { color: var(--color-accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px 14px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 13px;
+}
+
+button:hover { background: var(--color-border); }
+button.primary { background: var(--color-accent); border-color: var(--color-accent); color: white; }
+button.danger { background: var(--color-error); border-color: var(--color-error); color: white; }
+
+input, select, textarea {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text);
+  padding: 6px 10px;
+  font-size: 13px;
+  width: 100%;
+}
+
+input:focus, select:focus, textarea:focus {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 1px;
+}
