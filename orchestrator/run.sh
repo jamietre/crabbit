@@ -308,3 +308,98 @@ claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read
 done || CLAUDE_EXIT=$?
 
 log "Claude exited with code ${CLAUDE_EXIT}"
+
+# ── Step 11: Read outcome ─────────────────────────────────────────────────────
+
+if [ ! -f "$OUTCOME_FILE" ]; then
+    log "WARNING: Claude did not write outcome.json. Marking as failed."
+    api_patch "/tasks/${TASK_ID}" \
+        "{\"status\": \"failed\", \"error_message\": \"Claude did not produce outcome.json (exit code: ${CLAUDE_EXIT})\"}" \
+        > /dev/null
+    api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+    exit 0
+fi
+
+OUTCOME=$(cat "$OUTCOME_FILE")
+RESULT=$(echo "$OUTCOME" | jq -r '.result // "failed"')
+log "Outcome: ${RESULT}"
+
+# ── Step 12: Upload screenshots ───────────────────────────────────────────────
+
+for screenshot in "${SCREENSHOTS_DIR}"/*.png "${SCREENSHOTS_DIR}"/*.jpg; do
+    [ -f "$screenshot" ] || continue
+    FILENAME=$(basename "$screenshot")
+    B64=$(base64 < "$screenshot" | tr -d '\n')
+    curl -sf -X POST \
+        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "{\"event_type\": \"browser_screenshot\", \"payload\": {\"filename\": \"${FILENAME}\", \"base64\": \"${B64}\"}}" \
+        "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null \
+        && log "Uploaded screenshot: ${FILENAME}" \
+        || log "WARNING: failed to upload screenshot: ${FILENAME}"
+done
+
+# ── Step 13: Report outcome ───────────────────────────────────────────────────
+
+case "$RESULT" in
+    pr_created)
+        PR_URL=$(echo "$OUTCOME"    | jq -r '.pr_url // ""')
+        PR_NUMBER=$(echo "$OUTCOME" | jq -r '.pr_number // null')
+        MESSAGE=$(echo "$OUTCOME"   | jq -r '.message // ""')
+        PATCH_BODY=$(jq -nc \
+            --arg status "pr_created" \
+            --arg pr_url "$PR_URL" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg error_message "$MESSAGE" \
+            '{status: $status, pr_url: $pr_url, pr_number: $pr_number, error_message: $error_message}')
+        api_patch "/tasks/${TASK_ID}" "$PATCH_BODY" > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        log "PR created: ${PR_URL}"
+        ;;
+
+    needs_human)
+        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Human input required"')
+        api_patch "/tasks/${TASK_ID}" \
+            "{\"status\": \"needs_human\", \"error_message\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        log "Needs human: ${MESSAGE}"
+        ;;
+
+    failed)
+        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Unknown failure"')
+        api_patch "/tasks/${TASK_ID}" \
+            "{\"status\": \"failed\", \"error_message\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        log "Failed: ${MESSAGE}"
+        ;;
+
+    usage_limit)
+        WAKE_AT=$(echo "$OUTCOME" | jq -r '.wake_at // 0')
+        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Usage limit hit"')
+        # Reset task to pending so it will be retried after wake
+        api_patch "/tasks/${TASK_ID}" '{"status": "pending"}' > /dev/null
+        api_put "/agent/state" \
+            "{\"status\": \"sleeping\", \"wake_at\": ${WAKE_AT}, \"current_task_id\": null, \"usage_note\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            > /dev/null
+        log "Usage limit hit. Sleeping until $(date -d "@${WAKE_AT}" 2>/dev/null || echo "${WAKE_AT}")."
+        ;;
+
+    *)
+        log "WARNING: unknown result '${RESULT}'. Marking as failed."
+        api_patch "/tasks/${TASK_ID}" \
+            "{\"status\": \"failed\", \"error_message\": \"Unknown result: ${RESULT}\"}" \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        ;;
+esac
+
+# ── Step 14: Cleanup ──────────────────────────────────────────────────────────
+
+rm -f "$OUTCOME_FILE" "$PROMPT_FILE" "${WORKDIR}/system-append.txt"
+rm -rf "$SCREENSHOTS_DIR"
+# Keep the claude log for debugging: rm -f "$CLAUDE_LOG"
+
+log "Done."
+exit 0
