@@ -149,3 +149,46 @@ if [ "$DRY_RUN" = "1" ]; then
     api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
     exit 0
 fi
+
+# ── Step 6: Fetch GitHub token ────────────────────────────────────────────────
+
+log "Fetching GitHub token..."
+AUTH_STATUS=$(api_get "/github/status")
+GH_CONNECTED=$(echo "$AUTH_STATUS" | jq -r '.connected')
+
+if [ "$GH_CONNECTED" != "true" ]; then
+    log "GitHub not connected. Marking task failed."
+    api_patch "/tasks/${TASK_ID}" '{"status": "failed", "error_message": "GitHub account not connected. Visit the crabbit UI to connect."}' > /dev/null
+    api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+    exit 1
+fi
+
+# The server returns the token decrypted when called with ?include_token=true
+# (only available to bearer token holders — protected by API key middleware).
+GH_TOKEN=$(api_get "/github/status?include_token=true" | jq -r '.access_token // empty')
+
+if [ -z "$GH_TOKEN" ]; then
+    die "Could not retrieve GitHub token from API"
+fi
+
+export GH_TOKEN
+export GITHUB_TOKEN="$GH_TOKEN"  # gh CLI reads either
+
+# ── Step 7: Clone / update repo ───────────────────────────────────────────────
+
+REPO_DIR="${WORKDIR}/repos/${REPO_OWNER}/${REPO_NAME}"
+
+if [ -d "${REPO_DIR}/.git" ]; then
+    log "Updating existing clone at ${REPO_DIR}..."
+    git -C "$REPO_DIR" fetch --quiet origin
+    git -C "$REPO_DIR" checkout --quiet main 2>/dev/null \
+        || git -C "$REPO_DIR" checkout --quiet master 2>/dev/null \
+        || true
+    git -C "$REPO_DIR" reset --quiet --hard origin/HEAD 2>/dev/null || true
+else
+    log "Cloning ${REPO_OWNER}/${REPO_NAME}..."
+    mkdir -p "$(dirname "$REPO_DIR")"
+    gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet
+fi
+
+log "Repo ready at ${REPO_DIR}"
