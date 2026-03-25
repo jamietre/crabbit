@@ -1,0 +1,19 @@
+[tools]
+node = "24"
+pnpm = "latest"
+
+[tasks.install]
+description = "Install dependencies"
+run = "pnpm install"
+
+[tasks.dev]
+description = "Start SvelteKit dev server"
+run = "pnpm dev"
+
+[tasks.build]
+description = "Build static assets"
+run = "pnpm build"
+
+[tasks.preview]
+description = "Preview the static build"
+run = "pnpm preview"
