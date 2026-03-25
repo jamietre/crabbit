@@ -1,0 +1,16 @@
+[Unit]
+Description=Crabbit - GitHub issue agent API server and UI
+Documentation=https://github.com/yourname/crabbit
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/crabbit-server --config %h/.config/crabbit/server.toml
+Restart=on-failure
+RestartSec=5s
+Environment=RUST_LOG=crabbit_server=info
+# Prevent OOM killer from targeting it
+OOMScoreAdjust=-100
+
+[Install]
+WantedBy=default.target
