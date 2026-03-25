@@ -192,3 +192,61 @@ else
 fi
 
 log "Repo ready at ${REPO_DIR}"
+
+# ── Step 8: Build prompt ──────────────────────────────────────────────────────
+
+PROMPT_FILE="${WORKDIR}/prompt.md"
+OUTCOME_FILE="${WORKDIR}/outcome.json"
+SCREENSHOTS_DIR="${WORKDIR}/screenshots"
+TEMPLATE="${CRABBIT_ORCHESTRATOR_DIR}/prompt_template.md"
+
+if [ ! -f "$TEMPLATE" ]; then
+    die "prompt_template.md not found at $TEMPLATE"
+fi
+
+rm -f "$OUTCOME_FILE"
+rm -rf "$SCREENSHOTS_DIR"
+mkdir -p "$SCREENSHOTS_DIR"
+
+# Render template by substituting CRABBIT_* placeholders
+# Use Python for safe substitution (avoids sed issues with special chars in issue body)
+python3 - <<PYEOF
+import sys
+
+with open("$TEMPLATE") as f:
+    template = f.read()
+
+replacements = {
+    "CRABBIT_REPO_OWNER": """${REPO_OWNER}""",
+    "CRABBIT_REPO_NAME": """${REPO_NAME}""",
+    "CRABBIT_ISSUE_NUMBER": """${ISSUE_NUMBER}""",
+    "CRABBIT_ISSUE_TITLE": """${ISSUE_TITLE}""",
+    "CRABBIT_ISSUE_URL": """${ISSUE_URL}""",
+    "CRABBIT_ISSUE_BODY": """${ISSUE_BODY}""",
+    "CRABBIT_REPO_DIR": """${REPO_DIR}""",
+    "CRABBIT_SCREENSHOTS_DIR": """${SCREENSHOTS_DIR}""",
+    "CRABBIT_OUTCOME_FILE": """${OUTCOME_FILE}""",
+    "CRABBIT_TASK_ID": """${TASK_ID}""",
+    "CRABBIT_API_URL": """${CRABBIT_API_URL}""",
+    "CRABBIT_API_KEY": """${CRABBIT_API_KEY}""",
+}
+
+# Remove the browser testing section if allow_browser_automation is false
+allow_browser = """${ALLOW_BROWSER}""" == "true"
+if not allow_browser:
+    import re
+    template = re.sub(
+        r'## Browser Testing.*?(?=## Reporting Your Outcome)',
+        '',
+        template,
+        flags=re.DOTALL
+    )
+
+for key, value in replacements.items():
+    template = template.replace(key, value)
+
+with open("${PROMPT_FILE}", "w") as f:
+    f.write(template)
+PYEOF
+
+log "Prompt written to ${PROMPT_FILE}"
