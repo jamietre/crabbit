@@ -18,7 +18,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args = Args::parse();
-    let config_path = expand_tilde(&args.config);
+    let config_path = crabbit_server::expand_tilde(&args.config);
     let config = crabbit_server::config::Config::load(&config_path)?;
 
     tracing::info!("opening database at {}", config.db_path);
@@ -33,12 +33,3 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn expand_tilde(path: &std::path::Path) -> std::path::PathBuf {
-    let s = path.to_string_lossy();
-    if s.starts_with("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return std::path::PathBuf::from(home).join(&s[2..]);
-        }
-    }
-    path.to_path_buf()
-}

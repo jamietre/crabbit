@@ -3,13 +3,15 @@
   import { agentState } from '$lib/stores';
   import AgentStatusCard from '$lib/components/AgentStatusCard.svelte';
   import TaskCard from '$lib/components/TaskCard.svelte';
-  import { tasks } from '$lib/api';
+  import { tasks, agent } from '$lib/api';
   import type { Task } from '$lib/types';
   import { onMount } from 'svelte';
 
   let recentTasks: Task[] = [];
   let stats = { total: 0, pr_created: 0, needs_human: 0, failed: 0 };
   let loading = true;
+  let running = false;
+  let runError = '';
 
   onMount(async () => {
     const all = await tasks.list();
@@ -22,13 +24,35 @@
     };
     loading = false;
   });
+
+  async function runNow() {
+    runError = '';
+    running = true;
+    try {
+      await agent.run();
+    } catch (e: any) {
+      runError = e.message;
+    } finally {
+      running = false;
+    }
+  }
 </script>
 
 <h1>Dashboard</h1>
 
 <div class="grid">
   <div class="section">
-    <h2>Agent</h2>
+    <div class="section-header">
+      <h2>Agent</h2>
+      <button
+        class="primary"
+        on:click={runNow}
+        disabled={running || $agentState?.status === 'running'}
+      >
+        {running ? 'Starting…' : 'Run now'}
+      </button>
+    </div>
+    {#if runError}<p class="run-error">{runError}</p>{/if}
     {#if $agentState}
       <AgentStatusCard state={$agentState} />
     {:else}
@@ -87,4 +111,5 @@
   .lbl { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; }
   .task-list { display: flex; flex-direction: column; gap: 8px; }
   .muted { color: var(--color-text-muted); font-size: 13px; }
+  .run-error { color: var(--color-error); font-size: 12px; margin: 4px 0 8px; }
 </style>

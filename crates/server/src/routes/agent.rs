@@ -1,9 +1,10 @@
 use axum::{
     extract::State,
-    routing::{get, put},
+    http::StatusCode,
+    routing::{get, post, put},
     Json, Router,
 };
-use crabbit_common::{AgentState, NextIssueResponse, UpdateAgentStateRequest};
+use crabbit_common::{AgentState, AgentStatus, NextIssueResponse, UpdateAgentStateRequest};
 use crate::{
     db::agent as db,
     error::{ApiError, ApiResult},
@@ -14,6 +15,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/state", get(get_state).put(update_state))
         .route("/next-issue", get(next_issue))
+        .route("/run", post(trigger_run))
 }
 
 async fn get_state(State(s): State<AppState>) -> ApiResult<AgentState> {
@@ -93,6 +95,25 @@ async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueRe
     }
 
     Ok(Json(None))
+}
+
+async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let agent_state = s.with_db(|c| db::get_agent_state(c))?;
+    if agent_state.status == AgentStatus::Running {
+        return Err(ApiError::BadRequest("agent is already running".into()));
+    }
+
+    let script = crate::expand_tilde(std::path::Path::new(&s.config.orchestrator_script));
+    let env_path = crate::expand_tilde(std::path::Path::new(&s.config.agent_env));
+
+    tokio::process::Command::new(&script)
+        .env("CRABBIT_CONFIG", &env_path)
+        .spawn()
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!(
+            "failed to spawn {}: {e}", script.display()
+        )))?;
+
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"spawned": true}))))
 }
 
 #[cfg(test)]

@@ -16,10 +16,26 @@ pub struct Config {
     pub encryption_key_hex: String,
 
     pub github_oauth: GitHubOAuthConfig,
+
+    /// Path to orchestrator/run.sh (spawned by POST /agent/run)
+    #[serde(default = "default_orchestrator_script")]
+    pub orchestrator_script: String,
+
+    /// Path to agent.env passed as CRABBIT_CONFIG when spawning the orchestrator
+    #[serde(default = "default_agent_env")]
+    pub agent_env: String,
 }
 
 fn default_bind() -> String {
     "127.0.0.1:3000".into()
+}
+
+fn default_orchestrator_script() -> String {
+    "~/.config/crabbit/orchestrator/run.sh".into()
+}
+
+fn default_agent_env() -> String {
+    "~/.config/crabbit/agent.env".into()
 }
 
 impl Config {

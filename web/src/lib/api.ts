@@ -23,7 +23,7 @@ async function request<T>(
     method,
     headers: {
       'Content-Type': 'application/json',
-      'X-Api-Key': apiKey,
+      'Authorization': `Bearer ${apiKey}`,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
@@ -77,21 +77,22 @@ export const agent = {
   setState: (patch: { status?: AgentStatus; wake_at?: number | null; usage_note?: string | null }) =>
     request<AgentState>('PUT', '/agent/state', patch),
   nextIssue: () => request<NextIssueResponse | null>('GET', '/agent/next-issue'),
+  run: () => request<{ spawned: boolean }>('POST', '/agent/run'),
 };
 
 // Settings
 export const settings = {
-  get: () => request<ClaudeSettings>('GET', '/settings'),
+  get: () => request<ClaudeSettings>('GET', '/claude-settings'),
   update: (patch: Partial<ClaudeSettings>) =>
-    request<ClaudeSettings>('PUT', '/settings', patch),
+    request<ClaudeSettings>('PUT', '/claude-settings', patch),
 };
 
 // GitHub Auth
 export const auth = {
-  status: () => request<GitHubAuthStatus>('GET', '/github/status'),
+  status: () => request<GitHubAuthStatus>('GET', '/auth/github/status'),
   beginOAuth: (repoId?: number) => {
     const qs = repoId !== undefined ? `?repo_id=${repoId}` : '';
-    return request<{ url: string }>('GET', `/github/begin${qs}`);
+    return request<{ url: string }>('GET', `/auth/github/begin${qs}`);
   },
-  disconnect: () => request<void>('DELETE', '/github'),
+  disconnect: () => request<void>('DELETE', '/auth/github'),
 };

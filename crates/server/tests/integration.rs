@@ -19,6 +19,8 @@ fn make_server() -> TestServer {
             client_secret: "sec".into(),
             callback_url_override: None,
         },
+        orchestrator_script: "/dev/null".into(),
+        agent_env: "/dev/null".into(),
     };
     let state = AppState::new(conn, config);
     TestServer::new(build_router(state)).unwrap()
