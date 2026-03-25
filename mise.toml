@@ -33,7 +33,7 @@ wait
 
 [tasks."server:dev"]
 description = "Run the server in dev mode"
-run = "cargo run -p crabbit-server -- --config ~/.config/crabbit/server.toml"
+run = "cargo run -p crabbit-server -- --config config/dev-server.toml"
 
 [tasks."web:dev"]
 description = "Start SvelteKit dev server (proxies /api to localhost:3000)"

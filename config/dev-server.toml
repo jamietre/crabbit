@@ -1,0 +1,18 @@
+bind = "127.0.0.1:3000"
+db_path = ".dev/crabbit.db"
+
+# Fixed dev-only keys — do not use in production
+api_key = "dev"
+encryption_key_hex = "100a643f6642276a47f1a1cbd2edb28c993adb9a10ba004541cc950c1d43372d"
+
+# Points at the repo scripts — works when server is run from project root
+orchestrator_script = "./orchestrator/run.sh"
+agent_env = "./config/dev-agent.env"
+
+[github_oauth]
+# Fill these in to test GitHub OAuth locally:
+#   1. Go to https://github.com/settings/developers → New OAuth App
+#   2. Set callback URL to http://localhost:3000/api/v1/auth/github/callback
+# Until set, the server starts fine but GitHub connect will fail.
+client_id = ""
+client_secret = ""
