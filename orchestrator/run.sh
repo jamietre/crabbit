@@ -97,3 +97,55 @@ fi
 
 log "Marking agent as running..."
 api_put "/agent/state" '{"status": "running"}' > /dev/null
+
+# ── Step 4: Fetch next issue ─────────────────────────────────────────────────
+
+log "Fetching next issue..."
+NEXT_ISSUE=$(api_get "/agent/next-issue")
+
+if [ "$NEXT_ISSUE" = "null" ] || [ -z "$NEXT_ISSUE" ]; then
+    log "No pending issues. Marking idle and exiting."
+    api_put "/agent/state" '{"status": "idle"}' > /dev/null
+    exit 0
+fi
+
+REPO_ID=$(echo "$NEXT_ISSUE"      | jq -r '.repo_id')
+REPO_OWNER=$(echo "$NEXT_ISSUE"   | jq -r '.repo_owner')
+REPO_NAME=$(echo "$NEXT_ISSUE"    | jq -r '.repo_name')
+ISSUE_NUMBER=$(echo "$NEXT_ISSUE" | jq -r '.issue_number')
+ISSUE_TITLE=$(echo "$NEXT_ISSUE"  | jq -r '.issue_title')
+ISSUE_URL=$(echo "$NEXT_ISSUE"    | jq -r '.issue_url')
+ISSUE_BODY=$(echo "$NEXT_ISSUE"   | jq -r '.issue_body')
+EXISTING_TASK_ID=$(echo "$NEXT_ISSUE" | jq -r '.existing_task_id // empty')
+
+log "Next issue: ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} — ${ISSUE_TITLE}"
+
+# ── Step 5: Register or reuse task ───────────────────────────────────────────
+
+if [ -n "$EXISTING_TASK_ID" ]; then
+    TASK_ID="$EXISTING_TASK_ID"
+    log "Resuming existing task #${TASK_ID}"
+else
+    log "Creating task..."
+    TASK_JSON=$(jq -nc \
+        --argjson repo_id "$REPO_ID" \
+        --argjson issue_number "$ISSUE_NUMBER" \
+        --arg issue_title "$ISSUE_TITLE" \
+        --arg issue_url "$ISSUE_URL" \
+        --arg issue_body "$ISSUE_BODY" \
+        '{repo_id: $repo_id, issue_number: $issue_number, issue_title: $issue_title, issue_url: $issue_url, issue_body: $issue_body}')
+    TASK=$(api_post "/tasks" "$TASK_JSON")
+    TASK_ID=$(echo "$TASK" | jq -r '.id')
+    log "Created task #${TASK_ID}"
+fi
+
+# Mark in progress
+api_patch "/tasks/${TASK_ID}" '{"status": "in_progress"}' > /dev/null
+api_put "/agent/state" "{\"status\": \"running\", \"current_task_id\": ${TASK_ID}}" > /dev/null
+
+if [ "$DRY_RUN" = "1" ]; then
+    log "DRY_RUN: would process ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} as task #${TASK_ID}"
+    api_patch "/tasks/${TASK_ID}" '{"status": "pending"}' > /dev/null
+    api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+    exit 0
+fi
