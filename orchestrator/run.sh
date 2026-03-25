@@ -250,3 +250,61 @@ with open("${PROMPT_FILE}", "w") as f:
 PYEOF
 
 log "Prompt written to ${PROMPT_FILE}"
+
+# ── Step 9: Fetch Claude settings ────────────────────────────────────────────
+
+CLAUDE_SETTINGS=$(api_get "/settings")
+CLAUDE_MODEL=$(echo "$CLAUDE_SETTINGS"  | jq -r '.model')
+CLAUDE_EFFORT=$(echo "$CLAUDE_SETTINGS" | jq -r '.effort_level')
+CLAUDE_BUDGET=$(echo "$CLAUDE_SETTINGS" | jq -r '.max_budget_usd // empty')
+CLAUDE_PROMPT_APPEND=$(echo "$CLAUDE_SETTINGS" | jq -r '.system_prompt_append // empty')
+ALLOW_BROWSER=$(echo "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automation')
+
+# Build extra flags from settings
+CLAUDE_FLAGS="--print --dangerously-skip-permissions"
+CLAUDE_FLAGS="${CLAUDE_FLAGS} --model ${CLAUDE_MODEL}"
+CLAUDE_FLAGS="${CLAUDE_FLAGS} --effort ${CLAUDE_EFFORT}"
+CLAUDE_FLAGS="${CLAUDE_FLAGS} --output-format stream-json"
+
+if [ -n "$CLAUDE_BUDGET" ]; then
+    CLAUDE_FLAGS="${CLAUDE_FLAGS} --max-budget-usd ${CLAUDE_BUDGET}"
+fi
+
+if [ -n "$CLAUDE_PROMPT_APPEND" ]; then
+    # Write to temp file to avoid quoting issues when passing to claude
+    APPEND_FILE="${WORKDIR}/system-append.txt"
+    printf '%s' "$CLAUDE_PROMPT_APPEND" > "$APPEND_FILE"
+    CLAUDE_FLAGS="${CLAUDE_FLAGS} --append-system-prompt @${APPEND_FILE}"
+fi
+
+if [ "$ALLOW_BROWSER" = "false" ]; then
+    log "Browser automation disabled in settings — prompt will not mention Playwright."
+fi
+
+# Append any extra_flags from settings (stored as JSON array, convert to space-separated)
+EXTRA_FLAGS_JSON=$(echo "$CLAUDE_SETTINGS" | jq -r '.extra_flags // []')
+EXTRA_FLAGS=$(echo "$EXTRA_FLAGS_JSON" | jq -r '.[]' | tr '\n' ' ')
+if [ -n "$EXTRA_FLAGS" ]; then
+    CLAUDE_FLAGS="${CLAUDE_FLAGS} ${EXTRA_FLAGS}"
+fi
+
+# ── Step 10: Invoke Claude ────────────────────────────────────────────────────
+
+log "Invoking Claude (model=${CLAUDE_MODEL}, effort=${CLAUDE_EFFORT})..."
+
+CLAUDE_EXIT=0
+CLAUDE_LOG="${WORKDIR}/claude-output.jsonl"
+
+# Stream output: each line of stream-json is posted as a claude_output event
+# and also written to a local log file.
+# shellcheck disable=SC2086
+claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read -r line; do
+    # Post each stream-json line as an event (fire-and-forget, ignore failures)
+    curl -sf -X POST \
+        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
+        -H "Content-Type: application/json" \
+        -d "{\"event_type\": \"claude_output\", \"payload\": $(echo "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
+        "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
+done || CLAUDE_EXIT=$?
+
+log "Claude exited with code ${CLAUDE_EXIT}"
