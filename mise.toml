@@ -1,6 +1,7 @@
 [tools]
 rust = "stable"
 node = "24"
+pnpm = "latest"
 
 [tasks.build]
 description = "Build web assets then compile the Rust server"
@@ -9,12 +10,12 @@ depends = ["web:build", "server:build"]
 [tasks."web:build"]
 description = "Build SvelteKit static assets"
 dir = "web"
-run = "npm run build"
+run = "pnpm build"
 
 [tasks."web:install"]
-description = "Install npm dependencies"
+description = "Install dependencies"
 dir = "web"
-run = "npm install"
+run = "pnpm install"
 
 [tasks."server:build"]
 description = "Compile the Rust server (release)"
@@ -28,7 +29,7 @@ run = "cargo run -p crabbit-server -- --config ~/.config/crabbit/server.toml"
 [tasks."web:dev"]
 description = "Start SvelteKit dev server (proxies /api to localhost:3000)"
 dir = "web"
-run = "npm run dev"
+run = "pnpm dev"
 
 [tasks.clean]
 description = "Remove build artifacts"
