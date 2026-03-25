@@ -3,7 +3,7 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
-use crabbit_common::{AgentState, UpdateAgentStateRequest};
+use crabbit_common::{AgentState, NextIssueResponse, UpdateAgentStateRequest};
 use crate::{
     db::agent as db,
     error::{ApiError, ApiResult},
@@ -30,8 +30,69 @@ async fn update_state(
     Ok(Json(state))
 }
 
-async fn next_issue() -> Json<Option<serde_json::Value>> {
-    Json(None) // Stubbed — will be implemented in Task 16
+async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueResponse>>, ApiError> {
+    use crabbit_common::TaskStatus;
+
+    // Get GitHub token
+    let encrypted_token = s.with_db(|c| crate::db::auth::get_github_token(c))?;
+    let token = match encrypted_token {
+        None => return Ok(Json(None)),
+        Some(enc) => {
+            let key = s.config.encryption_key()
+                .map_err(|e| ApiError::Internal(e))?;
+            crate::crypto::decrypt(&enc, &key)
+                .map_err(|e| ApiError::Internal(e))?
+        }
+    };
+
+    let repos = s.with_db(|c| crate::db::repos::list_enabled_repos(c))?;
+    if repos.is_empty() {
+        return Ok(Json(None));
+    }
+
+    let gh = crate::github::GitHubClient::from_token(token);
+
+    for repo in repos {
+        let issues = gh
+            .list_open_issues(&repo.owner, &repo.name, repo.label_filter.as_deref())
+            .await
+            .map_err(|e| ApiError::Internal(e))?;
+
+        for issue in issues {
+            let existing = s.with_db(|c| {
+                crate::db::tasks::get_task_by_issue(c, repo.id, issue.number)
+            })?;
+            match existing {
+                None => {
+                    return Ok(Json(Some(NextIssueResponse {
+                        repo_id: repo.id,
+                        repo_owner: repo.owner,
+                        repo_name: repo.name,
+                        issue_number: issue.number,
+                        issue_title: issue.title,
+                        issue_url: issue.html_url,
+                        issue_body: issue.body,
+                        existing_task_id: None,
+                    })));
+                }
+                Some(t) if t.status == TaskStatus::Pending => {
+                    return Ok(Json(Some(NextIssueResponse {
+                        repo_id: repo.id,
+                        repo_owner: repo.owner,
+                        repo_name: repo.name,
+                        issue_number: issue.number,
+                        issue_title: issue.title,
+                        issue_url: issue.html_url,
+                        issue_body: issue.body,
+                        existing_task_id: Some(t.id),
+                    })));
+                }
+                Some(_) => continue,
+            }
+        }
+    }
+
+    Ok(Json(None))
 }
 
 #[cfg(test)]
@@ -57,5 +118,14 @@ mod tests {
         let state: serde_json::Value = r.json();
         assert_eq!(state["status"], "sleeping");
         assert_eq!(state["wake_at"], 9999999999i64);
+    }
+
+    #[tokio::test]
+    async fn next_issue_returns_null_when_no_repos() {
+        let server = test_server();
+        let r = server.get("/api/v1/agent/next-issue").add_auth().await;
+        assert_eq!(r.status_code(), 200);
+        let body: serde_json::Value = r.json();
+        assert!(body.is_null());
     }
 }
