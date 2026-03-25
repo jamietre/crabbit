@@ -1,0 +1,19 @@
+[Unit]
+Description=Crabbit agent timer - triggers issue processing every 30 minutes
+Requires=crabbit-agent.service
+
+[Timer]
+# Start 5 minutes after boot (give crabbit-server time to start)
+OnBootSec=5min
+
+# Then run 30 minutes after each completion
+# The orchestrator exits immediately if still sleeping — this is safe to run frequently
+OnUnitInactiveSec=30min
+
+# Allow 1 minute of slack (avoid thundering herd at exact multiples)
+AccuracySec=1min
+
+Unit=crabbit-agent.service
+
+[Install]
+WantedBy=timers.target

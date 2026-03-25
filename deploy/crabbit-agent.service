@@ -1,0 +1,28 @@
+[Unit]
+Description=Crabbit agent run (one-shot GitHub issue processor)
+After=network.target
+# Don't require crabbit-server — it may be remote or the agent may start first
+# The orchestrator will fail gracefully if API is unreachable
+
+[Service]
+Type=oneshot
+# agent.env exports CRABBIT_API_URL, CRABBIT_API_KEY, WORKDIR
+EnvironmentFile=%h/.config/crabbit/agent.env
+ExecStart=%h/.config/crabbit/orchestrator/run.sh
+
+# Don't restart — the timer controls scheduling
+Restart=no
+
+# Give Claude up to 90 minutes per issue (complex issues take time)
+TimeoutStartSec=5400
+
+# Make sure standard tools are on PATH
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin:%h/.cargo/bin
+
+# Capture output in journal
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=crabbit-agent
+
+[Install]
+WantedBy=default.target
