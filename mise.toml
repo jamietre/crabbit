@@ -22,6 +22,15 @@ description = "Compile the Rust server (release)"
 depends = ["web:build"]
 run = "cargo build --release"
 
+[tasks.dev]
+description = "Start API server and web dev server concurrently"
+run = """
+trap 'kill 0' INT TERM EXIT
+mise run server:dev &
+mise run web:dev &
+wait
+"""
+
 [tasks."server:dev"]
 description = "Run the server in dev mode"
 run = "cargo run -p crabbit-server -- --config ~/.config/crabbit/server.toml"
