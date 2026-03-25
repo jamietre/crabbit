@@ -1,0 +1,33 @@
+[package]
+name = "crabbit-server"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crabbit-server"
+path = "src/main.rs"
+
+[dependencies]
+crabbit-common = { path = "../common" }
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rust-embed = "8"
+reqwest = { version = "0.12", features = ["json"] }
+aes-gcm = "0.10"
+rand = "0.8"
+toml = "0.8"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+anyhow = "1"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+clap = { version = "4", features = ["derive"] }
+
+[dev-dependencies]
+axum-test = "14"
+tempfile = "3"
+wiremock = "0.6"
