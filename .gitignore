@@ -1,1 +1,14 @@
 .worktrees/
+node_modules
+dist
+build
+coverage
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+.idea/
+.vscode/
+*.env   
+
