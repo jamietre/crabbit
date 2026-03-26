@@ -140,6 +140,8 @@ pub struct AgentState {
     pub last_run_at: Option<i64>,
     pub current_task_id: Option<i64>,
     pub usage_note: Option<String>,
+    pub usage_pct_7d: Option<f64>,
+    pub usage_reset_at: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,6 +150,8 @@ pub struct UpdateAgentStateRequest {
     pub wake_at: Option<i64>,
     pub current_task_id: Option<i64>,
     pub usage_note: Option<String>,
+    pub usage_pct_7d: Option<f64>,
+    pub usage_reset_at: Option<i64>,
 }
 
 // ── GitHub Auth ──────────────────────────────────────────────────────────────
@@ -170,6 +174,7 @@ pub struct ClaudeSettings {
     pub model: String,
     pub effort_level: String,
     pub max_budget_usd: Option<f64>,
+    pub usage_limit_pct: Option<f64>,
     pub system_prompt_append: Option<String>,
     pub allow_browser_automation: bool,
     pub extra_flags: Vec<String>,
@@ -181,6 +186,7 @@ impl Default for ClaudeSettings {
             model: "claude-sonnet-4-6".into(),
             effort_level: "high".into(),
             max_budget_usd: None,
+            usage_limit_pct: None,
             system_prompt_append: None,
             allow_browser_automation: true,
             extra_flags: vec![],
@@ -193,6 +199,7 @@ pub struct UpdateClaudeSettingsRequest {
     pub model: Option<String>,
     pub effort_level: Option<String>,
     pub max_budget_usd: Option<f64>,
+    pub usage_limit_pct: Option<f64>,
     pub system_prompt_append: Option<String>,
     pub allow_browser_automation: Option<bool>,
     pub extra_flags: Option<Vec<String>>,

@@ -55,6 +55,8 @@ export interface AgentState {
   last_run_at: number | null;
   current_task_id: number | null;
   usage_note: string | null;
+  usage_pct_7d: number | null;
+  usage_reset_at: number | null;
 }
 
 export interface GitHubAuthStatus {
@@ -68,6 +70,7 @@ export interface ClaudeSettings {
   model: string;
   effort_level: string;
   max_budget_usd: number | null;
+  usage_limit_pct: number | null;
   system_prompt_append: string | null;
   allow_browser_automation: boolean;
   extra_flags: string[];

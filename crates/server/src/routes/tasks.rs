@@ -103,13 +103,12 @@ fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::routes::tests::{test_server, AddAuth};
+    use crate::routes::tests::test_server;
 
     #[tokio::test]
     async fn create_task_requires_valid_repo() {
         let server = test_server();
-        let r = server.post("/api/v1/tasks").add_auth()
+        let r = server.post("/api/v1/tasks")
             .json(&serde_json::json!({
                 "repo_id": 9999, "issue_number": 1,
                 "issue_title": "t", "issue_url": "u", "issue_body": "b"
@@ -120,11 +119,11 @@ mod tests {
     #[tokio::test]
     async fn create_and_get_task_with_events() {
         let server = test_server();
-        let repo: serde_json::Value = server.post("/api/v1/repos").add_auth()
+        let repo: serde_json::Value = server.post("/api/v1/repos")
             .json(&serde_json::json!({"owner": "x", "name": "y"})).await.json();
         let repo_id = repo["id"].as_i64().unwrap();
 
-        let r = server.post("/api/v1/tasks").add_auth()
+        let r = server.post("/api/v1/tasks")
             .json(&serde_json::json!({
                 "repo_id": repo_id, "issue_number": 5,
                 "issue_title": "Fix it", "issue_url": "https://gh/5", "issue_body": "body"
@@ -133,11 +132,11 @@ mod tests {
         let task: serde_json::Value = r.json();
         let task_id = task["id"].as_i64().unwrap();
 
-        server.post(&format!("/api/v1/tasks/{}/events", task_id)).add_auth()
+        server.post(&format!("/api/v1/tasks/{}/events", task_id))
             .json(&serde_json::json!({"event_type": "status_change", "payload": {"from": "pending"}}))
             .await;
 
-        let r2 = server.get(&format!("/api/v1/tasks/{}", task_id)).add_auth().await;
+        let r2 = server.get(&format!("/api/v1/tasks/{}", task_id)).await;
         let full: serde_json::Value = r2.json();
         assert_eq!(full["events"].as_array().unwrap().len(), 1);
     }

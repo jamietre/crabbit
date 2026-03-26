@@ -49,7 +49,9 @@ CREATE TABLE IF NOT EXISTS agent_state (
     wake_at         INTEGER,
     last_run_at     INTEGER,
     current_task_id INTEGER REFERENCES tasks(id),
-    usage_note      TEXT
+    usage_note      TEXT,
+    usage_pct_7d    REAL,
+    usage_reset_at  INTEGER
 );
 INSERT OR IGNORE INTO agent_state(id, status) VALUES (1, 'idle');
 
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS claude_settings (
     model                    TEXT    NOT NULL DEFAULT 'claude-sonnet-4-6',
     effort_level             TEXT    NOT NULL DEFAULT 'high',
     max_budget_usd           REAL,
+    usage_limit_pct          REAL,
     system_prompt_append     TEXT,
     allow_browser_automation INTEGER NOT NULL DEFAULT 1,
     extra_flags              TEXT

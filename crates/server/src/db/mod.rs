@@ -21,6 +21,10 @@ pub fn open_db(path: &str) -> anyhow::Result<Connection> {
 
 fn run_schema(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(SCHEMA).context("failed to run schema")?;
+    // Migrations: ignore errors when columns already exist
+    let _ = conn.execute_batch("ALTER TABLE claude_settings ADD COLUMN usage_limit_pct REAL");
+    let _ = conn.execute_batch("ALTER TABLE agent_state ADD COLUMN usage_pct_7d REAL");
+    let _ = conn.execute_batch("ALTER TABLE agent_state ADD COLUMN usage_reset_at INTEGER");
     Ok(())
 }
 

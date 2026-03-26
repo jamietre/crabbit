@@ -118,13 +118,12 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::routes::tests::{test_server, AddAuth};
+    use crate::routes::tests::test_server;
 
     #[tokio::test]
     async fn agent_state_default_is_idle() {
         let server = test_server();
-        let r = server.get("/api/v1/agent/state").add_auth().await;
+        let r = server.get("/api/v1/agent/state").await;
         let state: serde_json::Value = r.json();
         assert_eq!(state["status"], "idle");
     }
@@ -132,10 +131,10 @@ mod tests {
     #[tokio::test]
     async fn set_agent_sleeping() {
         let server = test_server();
-        server.put("/api/v1/agent/state").add_auth()
+        server.put("/api/v1/agent/state")
             .json(&serde_json::json!({"status": "sleeping", "wake_at": 9999999999i64}))
             .await;
-        let r = server.get("/api/v1/agent/state").add_auth().await;
+        let r = server.get("/api/v1/agent/state").await;
         let state: serde_json::Value = r.json();
         assert_eq!(state["status"], "sleeping");
         assert_eq!(state["wake_at"], 9999999999i64);
@@ -144,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn next_issue_returns_null_when_no_repos() {
         let server = test_server();
-        let r = server.get("/api/v1/agent/next-issue").add_auth().await;
+        let r = server.get("/api/v1/agent/next-issue").await;
         assert_eq!(r.status_code(), 200);
         let body: serde_json::Value = r.json();
         assert!(body.is_null());

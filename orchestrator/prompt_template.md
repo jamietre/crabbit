@@ -75,7 +75,6 @@ You may POST progress events to the crabbit API for rich UI display:
 
 ```bash
 curl -s -X POST CRABBIT_API_URL/api/v1/tasks/CRABBIT_TASK_ID/events \
-  -H "Authorization: Bearer CRABBIT_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"event_type": "comment_posted", "payload": {"comment": "..."}}'
 ```

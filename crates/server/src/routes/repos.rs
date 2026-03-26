@@ -62,14 +62,13 @@ fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crabbit_common::Repo;
-    use crate::routes::tests::{test_server, AddAuth};
+    use crate::routes::tests::test_server;
 
     #[tokio::test]
     async fn list_repos_empty() {
         let server = test_server();
-        let r = server.get("/api/v1/repos").add_auth().await;
+        let r = server.get("/api/v1/repos").await;
         assert_eq!(r.status_code(), 200);
         let repos: Vec<Repo> = r.json();
         assert!(repos.is_empty());
@@ -80,14 +79,13 @@ mod tests {
         let server = test_server();
         let r = server
             .post("/api/v1/repos")
-            .add_auth()
             .json(&serde_json::json!({"owner": "acme", "name": "api"}))
             .await;
         assert_eq!(r.status_code(), 201);
         let created: Repo = r.json();
         assert_eq!(created.owner, "acme");
 
-        let r2 = server.get("/api/v1/repos").add_auth().await;
+        let r2 = server.get("/api/v1/repos").await;
         let repos: Vec<Repo> = r2.json();
         assert_eq!(repos.len(), 1);
     }
@@ -95,10 +93,10 @@ mod tests {
     #[tokio::test]
     async fn delete_repo_test() {
         let server = test_server();
-        let r = server.post("/api/v1/repos").add_auth()
+        let r = server.post("/api/v1/repos")
             .json(&serde_json::json!({"owner": "x", "name": "y"})).await;
         let repo: Repo = r.json();
-        let r2 = server.delete(&format!("/api/v1/repos/{}", repo.id)).add_auth().await;
+        let r2 = server.delete(&format!("/api/v1/repos/{}", repo.id)).await;
         assert_eq!(r2.status_code(), 204);
     }
 }

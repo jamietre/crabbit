@@ -133,15 +133,14 @@ fn unix_now() -> i64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::routes::tests::{test_server, test_state, AddAuth};
+    use crate::routes::tests::{test_server, test_state};
     use axum_test::TestServer;
     use crate::routes::build_router;
 
     #[tokio::test]
     async fn auth_status_not_connected_initially() {
         let server = test_server();
-        let r = server.get("/api/v1/auth/github/status").add_auth().await;
+        let r = server.get("/api/v1/auth/github/status").await;
         let s: serde_json::Value = r.json();
         assert_eq!(s["connected"], false);
     }
@@ -149,7 +148,7 @@ mod tests {
     #[tokio::test]
     async fn begin_returns_github_url() {
         let server = test_server();
-        let r = server.get("/api/v1/auth/github/begin").add_auth().await;
+        let r = server.get("/api/v1/auth/github/begin").await;
         let s: serde_json::Value = r.json();
         let url = s["url"].as_str().unwrap();
         assert!(url.starts_with("https://github.com/login/oauth/authorize"));
@@ -162,11 +161,11 @@ mod tests {
         let state = test_state();
         state.with_db(|c| crate::db::auth::set_github_auth(c, "enc_token", "repo", "testuser", 1_700_000_000)).unwrap();
         let server = TestServer::new(build_router(state)).unwrap();
-        let r = server.get("/api/v1/auth/github/status").add_auth().await;
+        let r = server.get("/api/v1/auth/github/status").await;
         let s: serde_json::Value = r.json();
         assert_eq!(s["connected"], true);
-        server.delete("/api/v1/auth/github").add_auth().await;
-        let r2 = server.get("/api/v1/auth/github/status").add_auth().await;
+        server.delete("/api/v1/auth/github").await;
+        let r2 = server.get("/api/v1/auth/github/status").await;
         let s2: serde_json::Value = r2.json();
         assert_eq!(s2["connected"], false);
     }

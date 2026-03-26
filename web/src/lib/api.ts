@@ -18,12 +18,10 @@ async function request<T>(
   path: string,
   body?: unknown
 ): Promise<T> {
-  const apiKey = localStorage.getItem('crabbit_api_key') ?? '';
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`,
     },
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });

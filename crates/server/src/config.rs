@@ -9,9 +9,6 @@ pub struct Config {
     /// Path to the SQLite database file
     pub db_path: String,
 
-    /// Bearer token required on all /api/v1/* requests
-    pub api_key: String,
-
     /// 32-byte AES-GCM key as lowercase hex (64 chars) for encrypting the GitHub token
     pub encryption_key_hex: String,
 
@@ -67,7 +64,6 @@ mod tests {
     #[test]
     fn parse_minimal_config() {
         let toml = r#"
-            api_key = "secret"
             db_path = "/tmp/crabbit.db"
             encryption_key_hex = "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"
 
@@ -76,7 +72,6 @@ mod tests {
             client_secret = "ghsec_xyz"
         "#;
         let cfg: Config = toml::from_str(toml).unwrap();
-        assert_eq!(cfg.api_key, "secret");
         assert_eq!(cfg.bind, "127.0.0.1:3000"); // default
         assert_eq!(cfg.github_oauth.client_id, "Iv1.abc123");
     }

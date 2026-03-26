@@ -3,9 +3,19 @@
   import { githubStatus } from '$lib/stores';
   import { auth as authApi } from '$lib/api';
 
+  let connecting = false;
+  let connectError = '';
+
   async function connectGitHub() {
-    const { url } = await authApi.beginOAuth();
-    window.location.href = url;
+    connecting = true;
+    connectError = '';
+    try {
+      const { url } = await authApi.beginOAuth();
+      window.location.href = url;
+    } catch (e: any) {
+      connectError = e.message;
+      connecting = false;
+    }
   }
 
   async function disconnect() {
@@ -41,7 +51,10 @@
     <h2>Connect your GitHub account</h2>
     <p>Crabbit needs access to your GitHub repos to read issues and create pull requests.</p>
     <p><strong>Required scopes:</strong> <code>repo</code>, <code>read:user</code></p>
-    <button class="primary" on:click={connectGitHub}>Connect GitHub</button>
+    <button class="primary" on:click={connectGitHub} disabled={connecting}>
+      {connecting ? 'Redirecting…' : 'Connect GitHub'}
+    </button>
+    {#if connectError}<p class="error">{connectError}</p>{/if}
   </div>
 {/if}
 
@@ -73,4 +86,5 @@
   .connect-card h2 { margin: 0 0 12px; font-size: 16px; }
   .connect-card p { font-size: 13px; color: var(--color-text-muted); margin: 0 0 12px; }
   code { background: var(--color-border); padding: 2px 5px; border-radius: 3px; font-size: 12px; }
+  .error { color: var(--color-error); font-size: 12px; margin: 8px 0 0; }
 </style>

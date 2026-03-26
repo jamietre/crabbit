@@ -18,7 +18,7 @@ fi
 . "$CONFIG"
 
 # Validate required variables
-for var in CRABBIT_API_URL CRABBIT_API_KEY WORKDIR; do
+for var in CRABBIT_API_URL WORKDIR; do
     eval "val=\${$var:-}"
     if [ -z "$val" ]; then
         echo "ERROR: $var is not set in $CONFIG" >&2
@@ -29,15 +29,49 @@ done
 DRY_RUN=0
 if [ "${1:-}" = "--dry-run" ]; then DRY_RUN=1; fi
 
+# ── Cleanup trap ─────────────────────────────────────────────────────────────
+# On unexpected exit, reset agent state to idle so it doesn't get stuck.
+# Set _state_managed=1 before any exit that already handles agent state.
+_state_managed=0
+cleanup() {
+    [ "$_state_managed" = "1" ] && return
+    curl -sf -X PUT \
+        -H "Content-Type: application/json" \
+        -d '{"status": "idle", "current_task_id": null}' \
+        "${CRABBIT_API_URL}/api/v1/agent/state" > /dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+_log_buffer=""
+post_log() {
+    curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"event_type\": \"orchestrator_log\", \"payload\": {\"message\": $(printf '%s' "$1" | jq -Rs .)}}" \
+        "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
+}
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"
+    if [ -n "${TASK_ID:-}" ]; then
+        # Flush any buffered pre-task logs first
+        if [ -n "$_log_buffer" ]; then
+            printf '%s\n' "$_log_buffer" | while IFS= read -r _msg; do
+                [ -n "$_msg" ] && post_log "$_msg"
+            done
+            _log_buffer=""
+        fi
+        post_log "$*"
+    else
+        _log_buffer="${_log_buffer}${_log_buffer:+
+}$*"
+    fi
+}
 die() { echo "ERROR: $*" >&2; exit 1; }
 
 api_get() {
     # api_get <path> → stdout JSON
     curl -sf \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Accept: application/json" \
         "${CRABBIT_API_URL}/api/v1${1}"
 }
@@ -45,7 +79,6 @@ api_get() {
 api_put() {
     # api_put <path> <json-body>
     curl -sf -X PUT \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$2" \
         "${CRABBIT_API_URL}/api/v1${1}"
@@ -54,7 +87,6 @@ api_put() {
 api_post() {
     # api_post <path> <json-body>
     curl -sf -X POST \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$2" \
         "${CRABBIT_API_URL}/api/v1${1}"
@@ -63,7 +95,6 @@ api_post() {
 api_patch() {
     # api_patch <path> <json-body>
     curl -sf -X PATCH \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "$2" \
         "${CRABBIT_API_URL}/api/v1${1}"
@@ -80,15 +111,15 @@ log "Orchestrator started (DRY_RUN=$DRY_RUN)"
 
 log "Checking agent state..."
 AGENT_STATE=$(api_get "/agent/state")
-STATUS=$(echo "$AGENT_STATE" | jq -r '.status')
-WAKE_AT=$(echo "$AGENT_STATE" | jq -r '.wake_at // 0')
+STATUS=$(printf '%s\n' "$AGENT_STATE" | jq -r '.status')
+WAKE_AT=$(printf '%s\n' "$AGENT_STATE" | jq -r '.wake_at // 0')
 
 if [ "$STATUS" = "sleeping" ]; then
     NOW=$(date +%s)
     if [ "$WAKE_AT" -gt "$NOW" ]; then
         MINS=$(( (WAKE_AT - NOW) / 60 ))
-        log "Agent sleeping. Wake in ~${MINS}m (at $(date -d "@${WAKE_AT}" 2>/dev/null || date -r "${WAKE_AT}" 2>/dev/null || echo "${WAKE_AT}")). Exiting."
-        exit 0
+        log "Agent sleeping. Wake in ~${MINS}m (at $(date -d "@${WAKE_AT}" 2>/dev/null || date -r "${WAKE_AT}" 2>/dev/null || printf '%s\n' "${WAKE_AT}")). Exiting."
+        _state_managed=1; exit 0
     fi
     log "Sleep window has passed, resuming."
 fi
@@ -106,17 +137,17 @@ NEXT_ISSUE=$(api_get "/agent/next-issue")
 if [ "$NEXT_ISSUE" = "null" ] || [ -z "$NEXT_ISSUE" ]; then
     log "No pending issues. Marking idle and exiting."
     api_put "/agent/state" '{"status": "idle"}' > /dev/null
-    exit 0
+    _state_managed=1; exit 0
 fi
 
-REPO_ID=$(echo "$NEXT_ISSUE"      | jq -r '.repo_id')
-REPO_OWNER=$(echo "$NEXT_ISSUE"   | jq -r '.repo_owner')
-REPO_NAME=$(echo "$NEXT_ISSUE"    | jq -r '.repo_name')
-ISSUE_NUMBER=$(echo "$NEXT_ISSUE" | jq -r '.issue_number')
-ISSUE_TITLE=$(echo "$NEXT_ISSUE"  | jq -r '.issue_title')
-ISSUE_URL=$(echo "$NEXT_ISSUE"    | jq -r '.issue_url')
-ISSUE_BODY=$(echo "$NEXT_ISSUE"   | jq -r '.issue_body')
-EXISTING_TASK_ID=$(echo "$NEXT_ISSUE" | jq -r '.existing_task_id // empty')
+REPO_ID=$(printf '%s\n' "$NEXT_ISSUE"      | jq -r '.repo_id')
+REPO_OWNER=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.repo_owner')
+REPO_NAME=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.repo_name')
+ISSUE_NUMBER=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.issue_number')
+ISSUE_TITLE=$(printf '%s\n' "$NEXT_ISSUE"  | jq -r '.issue_title')
+ISSUE_URL=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.issue_url')
+ISSUE_BODY=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.issue_body')
+EXISTING_TASK_ID=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.existing_task_id // empty')
 
 log "Next issue: ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} — ${ISSUE_TITLE}"
 
@@ -135,7 +166,7 @@ else
         --arg issue_body "$ISSUE_BODY" \
         '{repo_id: $repo_id, issue_number: $issue_number, issue_title: $issue_title, issue_url: $issue_url, issue_body: $issue_body}')
     TASK=$(api_post "/tasks" "$TASK_JSON")
-    TASK_ID=$(echo "$TASK" | jq -r '.id')
+    TASK_ID=$(printf '%s\n' "$TASK" | jq -r '.id')
     log "Created task #${TASK_ID}"
 fi
 
@@ -147,25 +178,25 @@ if [ "$DRY_RUN" = "1" ]; then
     log "DRY_RUN: would process ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} as task #${TASK_ID}"
     api_patch "/tasks/${TASK_ID}" '{"status": "pending"}' > /dev/null
     api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
-    exit 0
+    _state_managed=1; exit 0
 fi
 
 # ── Step 6: Fetch GitHub token ────────────────────────────────────────────────
 
 log "Fetching GitHub token..."
-AUTH_STATUS=$(api_get "/github/status")
-GH_CONNECTED=$(echo "$AUTH_STATUS" | jq -r '.connected')
+AUTH_STATUS=$(api_get "/auth/github/status")
+GH_CONNECTED=$(printf '%s\n' "$AUTH_STATUS" | jq -r '.connected')
 
 if [ "$GH_CONNECTED" != "true" ]; then
     log "GitHub not connected. Marking task failed."
     api_patch "/tasks/${TASK_ID}" '{"status": "failed", "error_message": "GitHub account not connected. Visit the crabbit UI to connect."}' > /dev/null
     api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
-    exit 1
+    _state_managed=1; exit 1
 fi
 
 # The server returns the token decrypted when called with ?include_token=true
 # (only available to bearer token holders — protected by API key middleware).
-GH_TOKEN=$(api_get "/github/status?include_token=true" | jq -r '.access_token // empty')
+GH_TOKEN=$(api_get "/auth/github/status?include_token=true" | jq -r '.access_token // empty')
 
 if [ -z "$GH_TOKEN" ]; then
     die "Could not retrieve GitHub token from API"
@@ -193,7 +224,87 @@ fi
 
 log "Repo ready at ${REPO_DIR}"
 
-# ── Step 8: Build prompt ──────────────────────────────────────────────────────
+# ── Step 8: Fetch Claude settings ────────────────────────────────────────────
+
+CLAUDE_SETTINGS=$(api_get "/claude-settings")
+CLAUDE_MODEL=$(printf '%s\n' "$CLAUDE_SETTINGS"  | jq -r '.model')
+CLAUDE_EFFORT=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.effort_level')
+CLAUDE_BUDGET=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.max_budget_usd // empty')
+CLAUDE_USAGE_LIMIT=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.usage_limit_pct // empty')
+CLAUDE_PROMPT_APPEND=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.system_prompt_append // empty')
+ALLOW_BROWSER=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automation')
+
+# ── Step 8b: Check Claude Pro usage percentage ────────────────────────────────
+
+# Fetch usage from Anthropic API using the OAuth token from credentials file.
+# Store the result in agent state and enforce usage_limit_pct if configured.
+CLAUDE_USAGE_PCT=""
+CLAUDE_USAGE_RESET=""
+
+get_oauth_token() {
+    # Try CCS per-instance credentials first, then global
+    for creds in "${CLAUDE_CONFIG_DIR:-}/.credentials.json" "${HOME}/.claude/.credentials.json"; do
+        [ -f "$creds" ] || continue
+        tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds" 2>/dev/null)
+        [ -n "$tok" ] && [ "$tok" != "null" ] && { printf '%s' "$tok"; return 0; }
+    done
+    return 1
+}
+
+OAUTH_TOKEN=$(get_oauth_token 2>/dev/null || true)
+if [ -n "$OAUTH_TOKEN" ]; then
+    USAGE_RESP=$(curl -sf --max-time 10 \
+        -H "Accept: application/json" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${OAUTH_TOKEN}" \
+        -H "anthropic-beta: oauth-2025-04-20" \
+        -H "User-Agent: crabbit/1.0" \
+        "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || true)
+
+    if [ -n "$USAGE_RESP" ] && printf '%s\n' "$USAGE_RESP" | jq -e . > /dev/null 2>&1; then
+        CLAUDE_USAGE_PCT=$(printf '%s\n' "$USAGE_RESP" | jq -r '.seven_day.utilization // empty')
+        USAGE_RESET_ISO=$(printf '%s\n' "$USAGE_RESP" | jq -r '.seven_day.resets_at // empty')
+        # Convert ISO timestamp to unix epoch
+        if [ -n "$USAGE_RESET_ISO" ]; then
+            CLAUDE_USAGE_RESET=$(date -d "$USAGE_RESET_ISO" +%s 2>/dev/null || true)
+        fi
+
+        log "Claude Pro 7-day usage: ${CLAUDE_USAGE_PCT}%"
+
+        # Store in agent state
+        UPDATE_BODY=$(jq -nc \
+            --argjson pct "${CLAUDE_USAGE_PCT:-null}" \
+            --argjson reset "${CLAUDE_USAGE_RESET:-null}" \
+            '{usage_pct_7d: $pct, usage_reset_at: $reset}')
+        api_put "/agent/state" "$UPDATE_BODY" > /dev/null 2>&1 || true
+
+        # Enforce limit if configured
+        if [ -n "$CLAUDE_USAGE_LIMIT" ] && [ -n "$CLAUDE_USAGE_PCT" ]; then
+            # Compare as integers (floor)
+            PCT_INT=$(printf '%s\n' "$CLAUDE_USAGE_PCT" | awk '{printf "%.0f", $1}')
+            LIMIT_INT=$(printf '%s\n' "$CLAUDE_USAGE_LIMIT" | awk '{printf "%.0f", $1}')
+            if [ "$PCT_INT" -ge "$LIMIT_INT" ]; then
+                log "7-day usage ${PCT_INT}% >= limit ${LIMIT_INT}%. Resetting task to pending and sleeping."
+                WAKE_AT="${CLAUDE_USAGE_RESET:-0}"
+                if [ -z "$WAKE_AT" ] || [ "$WAKE_AT" = "0" ]; then
+                    # Default: sleep 24 hours
+                    WAKE_AT=$(( $(date +%s) + 86400 ))
+                fi
+                api_patch "/tasks/${TASK_ID}" '{"status": "pending"}' > /dev/null
+                api_put "/agent/state" \
+                    "{\"status\": \"sleeping\", \"wake_at\": ${WAKE_AT}, \"current_task_id\": null, \"usage_note\": \"7-day usage ${PCT_INT}% >= limit ${LIMIT_INT}%\"}" \
+                    > /dev/null
+                _state_managed=1; exit 0
+            fi
+        fi
+    else
+        log "Could not fetch Claude Pro usage (API unavailable or not a Pro account)."
+    fi
+else
+    log "No OAuth token found; skipping usage check."
+fi
+
+# ── Step 9: Build prompt ──────────────────────────────────────────────────────
 
 PROMPT_FILE="${WORKDIR}/prompt.md"
 OUTCOME_FILE="${WORKDIR}/outcome.json"
@@ -228,7 +339,6 @@ replacements = {
     "CRABBIT_OUTCOME_FILE": """${OUTCOME_FILE}""",
     "CRABBIT_TASK_ID": """${TASK_ID}""",
     "CRABBIT_API_URL": """${CRABBIT_API_URL}""",
-    "CRABBIT_API_KEY": """${CRABBIT_API_KEY}""",
 }
 
 # Remove the browser testing section if allow_browser_automation is false
@@ -251,17 +361,10 @@ PYEOF
 
 log "Prompt written to ${PROMPT_FILE}"
 
-# ── Step 9: Fetch Claude settings ────────────────────────────────────────────
-
-CLAUDE_SETTINGS=$(api_get "/settings")
-CLAUDE_MODEL=$(echo "$CLAUDE_SETTINGS"  | jq -r '.model')
-CLAUDE_EFFORT=$(echo "$CLAUDE_SETTINGS" | jq -r '.effort_level')
-CLAUDE_BUDGET=$(echo "$CLAUDE_SETTINGS" | jq -r '.max_budget_usd // empty')
-CLAUDE_PROMPT_APPEND=$(echo "$CLAUDE_SETTINGS" | jq -r '.system_prompt_append // empty')
-ALLOW_BROWSER=$(echo "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automation')
+# ── Step 10: Build Claude flags ───────────────────────────────────────────────
 
 # Build extra flags from settings
-CLAUDE_FLAGS="--print --dangerously-skip-permissions"
+CLAUDE_FLAGS="--print --verbose --dangerously-skip-permissions"
 CLAUDE_FLAGS="${CLAUDE_FLAGS} --model ${CLAUDE_MODEL}"
 CLAUDE_FLAGS="${CLAUDE_FLAGS} --effort ${CLAUDE_EFFORT}"
 CLAUDE_FLAGS="${CLAUDE_FLAGS} --output-format stream-json"
@@ -282,13 +385,13 @@ if [ "$ALLOW_BROWSER" = "false" ]; then
 fi
 
 # Append any extra_flags from settings (stored as JSON array, convert to space-separated)
-EXTRA_FLAGS_JSON=$(echo "$CLAUDE_SETTINGS" | jq -r '.extra_flags // []')
-EXTRA_FLAGS=$(echo "$EXTRA_FLAGS_JSON" | jq -r '.[]' | tr '\n' ' ')
+EXTRA_FLAGS_JSON=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.extra_flags // []')
+EXTRA_FLAGS=$(printf '%s\n' "$EXTRA_FLAGS_JSON" | jq -r '.[]' | tr '\n' ' ')
 if [ -n "$EXTRA_FLAGS" ]; then
     CLAUDE_FLAGS="${CLAUDE_FLAGS} ${EXTRA_FLAGS}"
 fi
 
-# ── Step 10: Invoke Claude ────────────────────────────────────────────────────
+# ── Step 11: Invoke Claude ────────────────────────────────────────────────────
 
 log "Invoking Claude (model=${CLAUDE_MODEL}, effort=${CLAUDE_EFFORT})..."
 
@@ -301,9 +404,8 @@ CLAUDE_LOG="${WORKDIR}/claude-output.jsonl"
 claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read -r line; do
     # Post each stream-json line as an event (fire-and-forget, ignore failures)
     curl -sf -X POST \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Content-Type: application/json" \
-        -d "{\"event_type\": \"claude_output\", \"payload\": $(echo "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
+        -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
         "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
 done || CLAUDE_EXIT=$?
 
@@ -317,11 +419,11 @@ if [ ! -f "$OUTCOME_FILE" ]; then
         "{\"status\": \"failed\", \"error_message\": \"Claude did not produce outcome.json (exit code: ${CLAUDE_EXIT})\"}" \
         > /dev/null
     api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
-    exit 0
+    _state_managed=1; exit 0
 fi
 
 OUTCOME=$(cat "$OUTCOME_FILE")
-RESULT=$(echo "$OUTCOME" | jq -r '.result // "failed"')
+RESULT=$(printf '%s\n' "$OUTCOME" | jq -r '.result // "failed"')
 log "Outcome: ${RESULT}"
 
 # ── Step 12: Upload screenshots ───────────────────────────────────────────────
@@ -331,7 +433,6 @@ for screenshot in "${SCREENSHOTS_DIR}"/*.png "${SCREENSHOTS_DIR}"/*.jpg; do
     FILENAME=$(basename "$screenshot")
     B64=$(base64 < "$screenshot" | tr -d '\n')
     curl -sf -X POST \
-        -H "Authorization: Bearer ${CRABBIT_API_KEY}" \
         -H "Content-Type: application/json" \
         -d "{\"event_type\": \"browser_screenshot\", \"payload\": {\"filename\": \"${FILENAME}\", \"base64\": \"${B64}\"}}" \
         "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null \
@@ -343,9 +444,9 @@ done
 
 case "$RESULT" in
     pr_created)
-        PR_URL=$(echo "$OUTCOME"    | jq -r '.pr_url // ""')
-        PR_NUMBER=$(echo "$OUTCOME" | jq -r '.pr_number // null')
-        MESSAGE=$(echo "$OUTCOME"   | jq -r '.message // ""')
+        PR_URL=$(printf '%s\n' "$OUTCOME"    | jq -r '.pr_url // ""')
+        PR_NUMBER=$(printf '%s\n' "$OUTCOME" | jq -r '.pr_number // null')
+        MESSAGE=$(printf '%s\n' "$OUTCOME"   | jq -r '.message // ""')
         PATCH_BODY=$(jq -nc \
             --arg status "pr_created" \
             --arg pr_url "$PR_URL" \
@@ -358,32 +459,32 @@ case "$RESULT" in
         ;;
 
     needs_human)
-        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Human input required"')
+        MESSAGE=$(printf '%s\n' "$OUTCOME" | jq -r '.message // "Human input required"')
         api_patch "/tasks/${TASK_ID}" \
-            "{\"status\": \"needs_human\", \"error_message\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            "{\"status\": \"needs_human\", \"error_message\": $(printf '%s\n' "$MESSAGE" | jq -Rs .)}" \
             > /dev/null
         api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
         log "Needs human: ${MESSAGE}"
         ;;
 
     failed)
-        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Unknown failure"')
+        MESSAGE=$(printf '%s\n' "$OUTCOME" | jq -r '.message // "Unknown failure"')
         api_patch "/tasks/${TASK_ID}" \
-            "{\"status\": \"failed\", \"error_message\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            "{\"status\": \"failed\", \"error_message\": $(printf '%s\n' "$MESSAGE" | jq -Rs .)}" \
             > /dev/null
         api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
         log "Failed: ${MESSAGE}"
         ;;
 
     usage_limit)
-        WAKE_AT=$(echo "$OUTCOME" | jq -r '.wake_at // 0')
-        MESSAGE=$(echo "$OUTCOME" | jq -r '.message // "Usage limit hit"')
+        WAKE_AT=$(printf '%s\n' "$OUTCOME" | jq -r '.wake_at // 0')
+        MESSAGE=$(printf '%s\n' "$OUTCOME" | jq -r '.message // "Usage limit hit"')
         # Reset task to pending so it will be retried after wake
         api_patch "/tasks/${TASK_ID}" '{"status": "pending"}' > /dev/null
         api_put "/agent/state" \
-            "{\"status\": \"sleeping\", \"wake_at\": ${WAKE_AT}, \"current_task_id\": null, \"usage_note\": $(echo "$MESSAGE" | jq -Rs .)}" \
+            "{\"status\": \"sleeping\", \"wake_at\": ${WAKE_AT}, \"current_task_id\": null, \"usage_note\": $(printf '%s\n' "$MESSAGE" | jq -Rs .)}" \
             > /dev/null
-        log "Usage limit hit. Sleeping until $(date -d "@${WAKE_AT}" 2>/dev/null || echo "${WAKE_AT}")."
+        log "Usage limit hit. Sleeping until $(date -d "@${WAKE_AT}" 2>/dev/null || printf '%s\n' "${WAKE_AT}")."
         ;;
 
     *)
@@ -402,4 +503,5 @@ rm -rf "$SCREENSHOTS_DIR"
 # Keep the claude log for debugging: rm -f "$CLAUDE_LOG"
 
 log "Done."
+_state_managed=1
 exit 0

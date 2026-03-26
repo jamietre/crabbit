@@ -31,13 +31,12 @@ async fn update_settings(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::routes::tests::{test_server, AddAuth};
+    use crate::routes::tests::test_server;
 
     #[tokio::test]
     async fn get_default_settings() {
         let server = test_server();
-        let r = server.get("/api/v1/claude-settings").add_auth().await;
+        let r = server.get("/api/v1/claude-settings").await;
         let s: serde_json::Value = r.json();
         assert_eq!(s["model"], "claude-sonnet-4-6");
         assert_eq!(s["effort_level"], "high");
@@ -47,9 +46,9 @@ mod tests {
     #[tokio::test]
     async fn update_model() {
         let server = test_server();
-        server.put("/api/v1/claude-settings").add_auth()
+        server.put("/api/v1/claude-settings")
             .json(&serde_json::json!({"model": "claude-opus-4-6"})).await;
-        let r = server.get("/api/v1/claude-settings").add_auth().await;
+        let r = server.get("/api/v1/claude-settings").await;
         let s: serde_json::Value = r.json();
         assert_eq!(s["model"], "claude-opus-4-6");
     }
