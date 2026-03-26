@@ -23,7 +23,7 @@ pub fn insert_task(
 pub fn get_task(conn: &Connection, id: i64) -> anyhow::Result<Option<Task>> {
     conn.query_row(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id,
+                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks WHERE id = ?1",
         params![id],
@@ -36,7 +36,7 @@ pub fn get_task(conn: &Connection, id: i64) -> anyhow::Result<Option<Task>> {
 pub fn get_task_by_issue(conn: &Connection, repo_id: i64, issue_number: i64) -> anyhow::Result<Option<Task>> {
     conn.query_row(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id,
+                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks WHERE repo_id = ?1 AND issue_number = ?2",
         params![repo_id, issue_number],
@@ -56,7 +56,7 @@ pub fn list_tasks(
     let status_str = status.map(|s| s.to_string());
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id,
+                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks
          WHERE (?1 IS NULL OR status = ?1)
@@ -66,6 +66,27 @@ pub fn list_tasks(
     )?;
     let rows = stmt.query_map(params![status_str, repo_id, limit, offset], row_to_task)?;
     rows.map(|r| r.context("row_to_task")).collect()
+}
+
+pub fn increment_retry_count(conn: &Connection, id: i64, now: i64) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE tasks SET retry_count = retry_count + 1, updated_at = ?1 WHERE id = ?2",
+        params![now, id],
+    )
+    .context("increment_retry_count")?;
+    Ok(())
+}
+
+pub fn delete_task(conn: &Connection, id: i64) -> anyhow::Result<bool> {
+    // Clear agent_state reference to avoid FK violation
+    conn.execute(
+        "UPDATE agent_state SET current_task_id = NULL WHERE current_task_id = ?1",
+        params![id],
+    )
+    .context("delete_task: clear agent_state")?;
+    let n = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])
+        .context("delete_task")?;
+    Ok(n > 0)
 }
 
 pub fn update_task_status(
@@ -176,10 +197,11 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         pr_number: row.get(8)?,
         error_message: row.get(9)?,
         claude_session_id: row.get(10)?,
-        created_at: row.get(11)?,
-        updated_at: row.get(12)?,
-        started_at: row.get(13)?,
-        completed_at: row.get(14)?,
+        retry_count: row.get(11)?,
+        created_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        started_at: row.get(14)?,
+        completed_at: row.get(15)?,
     })
 }
 

@@ -31,27 +31,18 @@ mise run web:dev &
 wait
 """
 
-[tasks."dev:local"]
-description = "Start API server (with local secrets from .config/) and web dev server"
-run = """
-trap 'kill 0' INT TERM EXIT
-mise run server:dev:local &
-mise run web:dev &
-wait
-"""
-
 [tasks."server:dev"]
-description = "Run the server in dev mode (example config — no real secrets)"
-run = "cargo run -p crabbit-server -- --config config/dev-server.toml"
-
-[tasks."server:dev:local"]
-description = "Run the server in dev mode using secrets from .config/"
+description = "Run the server in dev mode"
 run = "cargo run -p crabbit-server -- --config .config/dev-server.toml"
 
 [tasks."web:dev"]
 description = "Start SvelteKit dev server (proxies /api to localhost:3000)"
 dir = "web"
 run = "pnpm dev"
+
+[tasks."sync:claude-creds"]
+description = "Push local Claude OAuth token to the dev server (one-off)"
+run = "CRABBIT_API_URL=${CRABBIT_API_URL:-http://127.0.0.1:3000} ./deploy/claude-sync.sh --once"
 
 [tasks.clean]
 description = "Remove build artifacts"

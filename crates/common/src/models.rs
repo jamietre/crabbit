@@ -65,6 +65,7 @@ pub struct Task {
     pub pr_number: Option<i64>,
     pub error_message: Option<String>,
     pub claude_session_id: Option<String>,
+    pub retry_count: i64,
     pub created_at: i64,
     pub updated_at: i64,
     pub started_at: Option<i64>,
@@ -164,7 +165,8 @@ pub struct ClaudeAuthStatus {
 
 #[derive(Debug, Deserialize)]
 pub struct PushClaudeAuthRequest {
-    pub oauth_token: String,
+    /// Full contents of the .credentials.json file (includes refresh token).
+    pub credentials_json: String,
     pub sync_secret: String,
 }
 

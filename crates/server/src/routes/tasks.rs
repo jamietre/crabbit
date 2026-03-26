@@ -17,7 +17,7 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/", get(list).post(create))
-        .route("/:id", get(get_one).patch(update))
+        .route("/:id", get(get_one).patch(update).delete(delete_one))
         .route("/:id/events", post(add_event))
 }
 
@@ -78,6 +78,18 @@ async fn update(
     }
     let task = s.with_db(|c| db::get_task(c, id))?.unwrap();
     Ok(Json(task))
+}
+
+async fn delete_one(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    let deleted = s.with_db(|c| db::delete_task(c, id))?;
+    if deleted {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err(ApiError::NotFound("task".into()))
+    }
 }
 
 async fn add_event(

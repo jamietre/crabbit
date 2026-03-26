@@ -17,6 +17,16 @@ fi
 # shellcheck source=/dev/null
 . "$CONFIG"
 
+# If the agent env sets CLAUDE_CONFIG_DIR, export it and ensure the directory
+# exists so Claude does not load the user's personal settings.json / hooks.
+if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    # Wipe and recreate so stale state from previous runs doesn't interfere.
+    rm -rf "$CLAUDE_CONFIG_DIR"
+    mkdir -p "$CLAUDE_CONFIG_DIR"
+    CLAUDE_CONFIG_DIR="$(cd "$CLAUDE_CONFIG_DIR" && pwd)"
+    export CLAUDE_CONFIG_DIR
+fi
+
 # Validate required variables
 for var in CRABBIT_API_URL WORKDIR; do
     eval "val=\${$var:-}"
@@ -261,13 +271,19 @@ ALLOW_BROWSER=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automat
 # CLAUDE_CODE_OAUTH_TOKEN without needing any local credentials file.
 
 CLAUDE_AUTH_RESP=$(api_get "/claude-auth/token" 2>/dev/null || true)
-STORED_OAUTH_TOKEN=$(printf '%s\n' "$CLAUDE_AUTH_RESP" | jq -r '.oauth_token // empty' 2>/dev/null || true)
+STORED_CREDS_JSON=$(printf '%s\n' "$CLAUDE_AUTH_RESP" | jq -r '.credentials_json // empty' 2>/dev/null || true)
 
-if [ -n "$STORED_OAUTH_TOKEN" ]; then
-    export CLAUDE_CODE_OAUTH_TOKEN="$STORED_OAUTH_TOKEN"
-    log "Claude OAuth token loaded from API."
+if [ -n "$STORED_CREDS_JSON" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+    # Write full credentials to isolated config dir so Claude can auto-refresh.
+    printf '%s' "$STORED_CREDS_JSON" > "${CLAUDE_CONFIG_DIR}/.credentials.json"
+    log "Claude credentials written to isolated config dir."
+elif [ -n "$STORED_CREDS_JSON" ]; then
+    # Fallback: export the access token directly (no auto-refresh possible)
+    STORED_OAUTH_TOKEN=$(printf '%s\n' "$STORED_CREDS_JSON" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null || true)
+    [ -n "$STORED_OAUTH_TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN="$STORED_OAUTH_TOKEN"
+    log "Claude OAuth token loaded from API (no CLAUDE_CONFIG_DIR set)."
 else
-    log "No stored Claude OAuth token — relying on local credentials."
+    log "No stored Claude credentials — relying on local credentials."
 fi
 
 # ── Step 8c: Check Claude Pro usage percentage ────────────────────────────────
@@ -278,17 +294,13 @@ CLAUDE_USAGE_PCT=""
 CLAUDE_USAGE_RESET=""
 
 get_oauth_token() {
-    # Prefer the token already exported from the API (step 8b)
-    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
-        printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN"
-        return 0
-    fi
-    # Fallback: try CCS per-instance credentials or global ~/.claude credentials
+    # Try CLAUDE_CONFIG_DIR first (written by step 8b), then fallback to env var or global
     for creds in "${CLAUDE_CONFIG_DIR:-}/.credentials.json" "${HOME}/.claude/.credentials.json"; do
         [ -f "$creds" ] || continue
         tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds" 2>/dev/null)
         [ -n "$tok" ] && [ "$tok" != "null" ] && { printf '%s' "$tok"; return 0; }
     done
+    [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && { printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN"; return 0; }
     return 1
 }
 
@@ -435,32 +447,61 @@ fi
 # ── Step 11: Invoke Claude ────────────────────────────────────────────────────
 
 log "Invoking Claude (model=${CLAUDE_MODEL}, effort=${CLAUDE_EFFORT})..."
+log "Claude binary: $(command -v claude 2>/dev/null || echo 'NOT FOUND')"
+log "CLAUDE_CONFIG_DIR: ${CLAUDE_CONFIG_DIR:-<unset>}"
+log "Creds file exists: $([ -f "${CLAUDE_CONFIG_DIR:-}/.credentials.json" ] && echo yes || echo no)"
+log "CLAUDE_* env vars: $(env | grep -i '^CLAUDE' | tr '\n' ' ' || echo none)"
+# shellcheck disable=SC2086
+log "Claude command: claude ${CLAUDE_FLAGS} < ${PROMPT_FILE}"
 
 CLAUDE_EXIT=0
 CLAUDE_LOG="${WORKDIR}/claude-output.jsonl"
+CLAUDE_STDERR="${WORKDIR}/claude-stderr.txt"
+: > "$CLAUDE_LOG"   # Clear before run so stale output doesn't confuse auth checks
+: > "$CLAUDE_STDERR"
 
-# Stream output: each line of stream-json is posted as a claude_output event
-# and also written to a local log file.
-# Use a subshell with pipefail to capture claude's real exit code through the pipe.
+# Unset session-specific vars that leak from an outer Claude Code / CCS session
+# and cause --print mode to fail with exit code 2.
+unset CLAUDE_CODE_SSE_PORT
+unset CLAUDE_CODE_RESTART_TOKEN
+unset CLAUDE_CODE_PIPE_TIMEOUT
+
+# Run Claude, capturing output to a file, then stream events from the log.
+# Using file redirect (not pipe) avoids pipefail/dash interaction issues.
 # shellcheck disable=SC2086
 CLAUDE_EXIT=0
-(
-    set -o pipefail 2>/dev/null || true
-    claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read -r line; do
+claude $CLAUDE_FLAGS < "$PROMPT_FILE" > "$CLAUDE_LOG" 2>"$CLAUDE_STDERR" || CLAUDE_EXIT=$?
+
+# Post each output line as a task event
+if [ -s "$CLAUDE_LOG" ]; then
+    while IFS= read -r line; do
         curl -sf -X POST \
             -H "Content-Type: application/json" \
             -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
             "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
-    done
-) || CLAUDE_EXIT=$?
+    done < "$CLAUDE_LOG"
+fi
 
 log "Claude exited with code ${CLAUDE_EXIT}"
+if [ -s "$CLAUDE_STDERR" ]; then
+    STDERR_CONTENT=$(cat "$CLAUDE_STDERR")
+    log "Claude stderr: ${STDERR_CONTENT}"
+    # Append stderr to the jsonl log so auth checks can scan it
+    printf '%s\n' "$STDERR_CONTENT" >> "$CLAUDE_LOG"
+fi
 
 # ── Step 11: Read outcome ─────────────────────────────────────────────────────
 
 # Check for Claude authentication failure before treating as a generic error.
-if [ "$CLAUDE_EXIT" -ne 0 ]; then
-    if grep -qiE "not authenticated|authentication required|please log in|invalid credentials|oauth|api key" "$CLAUDE_LOG" 2>/dev/null; then
+if [ "$CLAUDE_EXIT" -ne 0 ] || grep -qiE "authentication_failed|oauth token has expired|not logged in|failed to authenticate" "$CLAUDE_LOG" 2>/dev/null; then
+    if grep -qiE "oauth token has expired|token.*expired|expired.*token" "$CLAUDE_LOG" 2>/dev/null; then
+        log "Claude OAuth token has expired — re-sync credentials via the crabbit UI or run 'mise run sync:claude-creds'."
+        api_patch "/tasks/${TASK_ID}" \
+            '{"status": "failed", "error_message": "Claude OAuth token has expired — re-sync credentials via '\''mise run sync:claude-creds'\'' then retry."}' \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        _state_managed=1; exit 0
+    elif grep -qiE "not authenticated|authentication required|please log in|invalid credentials|not logged in|failed to authenticate|authentication_failed" "$CLAUDE_LOG" 2>/dev/null; then
         log "Claude CLI is not authenticated."
         api_patch "/tasks/${TASK_ID}" \
             '{"status": "failed", "error_message": "Claude CLI not authenticated — push credentials via the desktop sync daemon or run '\''claude login'\'' on the server."}' \

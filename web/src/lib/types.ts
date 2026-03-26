@@ -31,6 +31,7 @@ export interface Task {
   pr_number: number | null;
   error_message: string | null;
   claude_session_id: string | null;
+  retry_count: number;
   created_at: number;
   updated_at: number;
   started_at: number | null;

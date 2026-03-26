@@ -68,6 +68,7 @@ export const tasks = {
     event_type: string,
     payload: Record<string, unknown>
   ) => request<void>('POST', `/tasks/${id}/events`, { event_type, payload }),
+  delete: (id: number) => request<void>('DELETE', `/tasks/${id}`),
 };
 
 // Agent

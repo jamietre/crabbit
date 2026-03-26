@@ -38,10 +38,10 @@
     }, 2000);
   }
 
-  async function retryTask() {
+  async function resetTask() {
     if (!task) return;
-    await tasksApi.updateStatus(task.id, 'pending');
-    task = { ...task, status: 'pending' };
+    await tasksApi.delete(task.id);
+    window.location.href = '/tasks';
   }
 
   function formatTime(ts: number) {
@@ -138,6 +138,9 @@
   <div class="task-header">
     <h1>{task.issue_title}</h1>
     <StatusBadge status={task.status} />
+    {#if task.status === 'failed' && task.retry_count > 0}
+      <span class="retry-badge">retried {task.retry_count}/2</span>
+    {/if}
   </div>
 
   <div class="meta-row">
@@ -145,10 +148,10 @@
     {#if task.pr_url}
       <a href={task.pr_url} target="_blank" rel="noopener" class="pr-link">PR #{task.pr_number} ↗</a>
     {/if}
-    {#if task.status === 'failed' || task.status === 'needs_human'}
-      <button on:click={retryTask}>Retry</button>
-    {:else if task.status === 'in_progress'}
-      <button on:click={retryTask}>Reset to pending</button>
+    {#if task.status === 'failed' && task.retry_count >= 2}
+      <button on:click={resetTask} class="btn-danger">Reset</button>
+    {:else if task.status === 'failed' || task.status === 'needs_human' || task.status === 'in_progress'}
+      <button on:click={resetTask} class="btn-danger">Reset</button>
     {/if}
   </div>
 
@@ -251,4 +254,6 @@
 
   .muted { color: var(--color-text-muted); }
   .error { color: var(--color-error); }
+  .btn-danger { color: var(--color-error); border-color: var(--color-error); }
+  .retry-badge { font-size: 11px; color: var(--color-text-muted); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px 6px; }
 </style>

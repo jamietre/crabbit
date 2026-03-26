@@ -23,17 +23,17 @@ async fn get_status(State(s): State<AppState>) -> ApiResult<ClaudeAuthStatus> {
     Ok(Json(status))
 }
 
-/// Returns the decrypted OAuth token for use by the orchestrator.
+/// Returns the decrypted credentials JSON for use by the orchestrator.
 async fn get_token(State(s): State<AppState>) -> ApiResult<serde_json::Value> {
     let encrypted = s.with_db(db::get_claude_oauth_token)?;
-    let token = match encrypted {
-        None => return Ok(Json(serde_json::json!({ "oauth_token": null }))),
+    let creds = match encrypted {
+        None => return Ok(Json(serde_json::json!({ "credentials_json": null }))),
         Some(enc) => {
             let key = s.config.encryption_key().map_err(ApiError::Internal)?;
             crate::crypto::decrypt(&enc, &key).map_err(ApiError::Internal)?
         }
     };
-    Ok(Json(serde_json::json!({ "oauth_token": token })))
+    Ok(Json(serde_json::json!({ "credentials_json": creds })))
 }
 
 /// Accepts a token push from the desktop sync daemon.
@@ -54,7 +54,7 @@ async fn push_token(
     }
 
     let key = s.config.encryption_key().map_err(ApiError::Internal)?;
-    let encrypted = crate::crypto::encrypt(&req.oauth_token, &key)
+    let encrypted = crate::crypto::encrypt(&req.credentials_json, &key)
         .map_err(ApiError::Internal)?;
 
     let now = std::time::SystemTime::now()
@@ -90,7 +90,7 @@ mod tests {
     async fn push_without_secret_configured_returns_400() {
         let server = test_server();
         let r = server.put("/api/v1/claude-auth")
-            .json(&serde_json::json!({"oauth_token": "tok", "sync_secret": "any"}))
+            .json(&serde_json::json!({"credentials_json": "{}", "sync_secret": "any"}))
             .await;
         assert_eq!(r.status_code(), 400);
     }
@@ -105,7 +105,7 @@ mod tests {
         });
         let server = TestServer::new(build_router(state)).unwrap();
         let r = server.put("/api/v1/claude-auth")
-            .json(&serde_json::json!({"oauth_token": "tok", "sync_secret": "wrong"}))
+            .json(&serde_json::json!({"credentials_json": "{}", "sync_secret": "wrong"}))
             .await;
         assert_eq!(r.status_code(), 403);
     }
@@ -120,7 +120,7 @@ mod tests {
         });
         let server = TestServer::new(build_router(state)).unwrap();
         server.put("/api/v1/claude-auth")
-            .json(&serde_json::json!({"oauth_token": "my_token", "sync_secret": "s3cret"}))
+            .json(&serde_json::json!({"credentials_json": "{\"claudeAiOauth\":{\"accessToken\":\"my_token\"}}", "sync_secret": "s3cret"}))
             .await;
         let r = server.get("/api/v1/claude-auth/status").await;
         let s: serde_json::Value = r.json();

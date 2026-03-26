@@ -56,18 +56,22 @@ push_token() {
         return
     fi
 
+    # Validate that the file contains a claudeAiOauth block
     TOKEN=$(jq -r '.claudeAiOauth.accessToken // empty' "$CLAUDE_CREDS_FILE" 2>/dev/null || true)
     if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
         log "No OAuth token found in credentials file — skipping push."
         return
     fi
 
+    # Push the full credentials JSON (not just the access token) so the server
+    # can write it to Claude's config dir, allowing automatic token refresh.
+    CREDS_JSON=$(cat "$CLAUDE_CREDS_FILE")
     BODY=$(jq -nc \
-        --arg token "$TOKEN" \
+        --arg creds "$CREDS_JSON" \
         --arg secret "$CRABBIT_SYNC_SECRET" \
-        '{oauth_token: $token, sync_secret: $secret}')
+        '{credentials_json: $creds, sync_secret: $secret}')
 
-    HTTP_STATUS=$(curl -sf -o /dev/null -w "%{http_code}" \
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
         -X PUT \
         -H "Content-Type: application/json" \
         -d "$BODY" \
