@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, patch, post},
+    routing::{get, patch},
     Json, Router,
 };
 use crabbit_common::{CreateRepoRequest, Repo, UpdateRepoRequest};
@@ -14,7 +14,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list(State(s): State<AppState>) -> ApiResult<Vec<Repo>> {
-    let repos = s.with_db(|c| db::list_repos(c))?;
+    let repos = s.with_db(db::list_repos)?;
     Ok(Json(repos))
 }
 

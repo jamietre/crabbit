@@ -1,6 +1,6 @@
 use axum::{
     extract::State,
-    routing::{get, put},
+    routing::get,
     Json, Router,
 };
 use crabbit_common::{ClaudeSettings, UpdateClaudeSettingsRequest};
@@ -16,7 +16,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_settings(State(s): State<AppState>) -> ApiResult<ClaudeSettings> {
-    let settings = s.with_db(|c| db::get_claude_settings(c))?;
+    let settings = s.with_db(db::get_claude_settings)?;
     Ok(Json(settings))
 }
 
@@ -25,7 +25,7 @@ async fn update_settings(
     Json(req): Json<UpdateClaudeSettingsRequest>,
 ) -> ApiResult<ClaudeSettings> {
     s.with_db(|c| db::update_claude_settings(c, &req))?;
-    let settings = s.with_db(|c| db::get_claude_settings(c))?;
+    let settings = s.with_db(db::get_claude_settings)?;
     Ok(Json(settings))
 }
 

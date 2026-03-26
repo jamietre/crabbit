@@ -39,6 +39,8 @@
     <div class="nav-end">
       {#if $githubStatus?.connected}
         <a class="gh-user" href="/auth">@{$githubStatus.github_login}</a>
+      {:else if $githubStatus?.github_login}
+        <a class="gh-expired" href="/auth" title="GitHub token expired — click to reconnect">@{$githubStatus.github_login} (reconnect)</a>
       {:else}
         <a class="gh-connect" href="/auth">Connect GitHub</a>
       {/if}
@@ -75,8 +77,9 @@
     color: var(--color-text); background: var(--color-border); text-decoration: none;
   }
   .nav-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-  .gh-user, .gh-connect { font-size: 12px; }
+  .gh-user, .gh-connect, .gh-expired { font-size: 12px; }
   .gh-connect { color: var(--color-warning); }
+  .gh-expired { color: var(--color-error); }
   .agent-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--color-text-muted);

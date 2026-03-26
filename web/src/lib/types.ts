@@ -76,6 +76,11 @@ export interface ClaudeSettings {
   extra_flags: string[];
 }
 
+export interface ClaudeAuthStatus {
+  configured: boolean;
+  updated_at: number | null;
+}
+
 export interface NextIssueResponse {
   repo_id: number;
   issue_number: number;

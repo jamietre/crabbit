@@ -1,7 +1,7 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    routing::{get, post, put},
+    routing::{get, post},
     Json, Router,
 };
 use crabbit_common::{AgentState, AgentStatus, NextIssueResponse, UpdateAgentStateRequest};
@@ -19,7 +19,7 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn get_state(State(s): State<AppState>) -> ApiResult<AgentState> {
-    let state = s.with_db(|c| db::get_agent_state(c))?;
+    let state = s.with_db(db::get_agent_state)?;
     Ok(Json(state))
 }
 
@@ -28,7 +28,7 @@ async fn update_state(
     Json(req): Json<UpdateAgentStateRequest>,
 ) -> ApiResult<AgentState> {
     s.with_db(|c| db::set_agent_state(c, &req))?;
-    let state = s.with_db(|c| db::get_agent_state(c))?;
+    let state = s.with_db(db::get_agent_state)?;
     Ok(Json(state))
 }
 
@@ -36,18 +36,18 @@ async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueRe
     use crabbit_common::TaskStatus;
 
     // Get GitHub token
-    let encrypted_token = s.with_db(|c| crate::db::auth::get_github_token(c))?;
+    let encrypted_token = s.with_db(crate::db::auth::get_github_token)?;
     let token = match encrypted_token {
         None => return Ok(Json(None)),
         Some(enc) => {
             let key = s.config.encryption_key()
-                .map_err(|e| ApiError::Internal(e))?;
+                .map_err(ApiError::Internal)?;
             crate::crypto::decrypt(&enc, &key)
-                .map_err(|e| ApiError::Internal(e))?
+                .map_err(ApiError::Internal)?
         }
     };
 
-    let repos = s.with_db(|c| crate::db::repos::list_enabled_repos(c))?;
+    let repos = s.with_db(crate::db::repos::list_enabled_repos)?;
     if repos.is_empty() {
         return Ok(Json(None));
     }
@@ -55,10 +55,18 @@ async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueRe
     let gh = crate::github::GitHubClient::from_token(token);
 
     for repo in repos {
-        let issues = gh
+        let issues = match gh
             .list_open_issues(&repo.owner, &repo.name, repo.label_filter.as_deref())
             .await
-            .map_err(|e| ApiError::Internal(e))?;
+        {
+            Ok(issues) => issues,
+            Err(e) if e.to_string().contains("GITHUB_AUTH_EXPIRED") => {
+                tracing::warn!("GitHub token expired — marking as expired");
+                s.with_db(crate::db::auth::expire_github_token)?;
+                return Ok(Json(None));
+            }
+            Err(e) => return Err(ApiError::Internal(e)),
+        };
 
         for issue in issues {
             let existing = s.with_db(|c| {
@@ -98,7 +106,7 @@ async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueRe
 }
 
 async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let agent_state = s.with_db(|c| db::get_agent_state(c))?;
+    let agent_state = s.with_db(db::get_agent_state)?;
     if agent_state.status == AgentStatus::Running {
         return Err(ApiError::BadRequest("agent is already running".into()));
     }

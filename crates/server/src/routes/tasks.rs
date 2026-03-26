@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
-    routing::{get, post, patch},
+    routing::{get, post},
     Json, Router,
 };
 use crabbit_common::{

@@ -8,6 +8,7 @@ import type {
   AgentStatus,
   GitHubAuthStatus,
   ClaudeSettings,
+  ClaudeAuthStatus,
   NextIssueResponse,
 } from './types';
 
@@ -83,6 +84,12 @@ export const settings = {
   get: () => request<ClaudeSettings>('GET', '/claude-settings'),
   update: (patch: Partial<ClaudeSettings>) =>
     request<ClaudeSettings>('PUT', '/claude-settings', patch),
+};
+
+// Claude Auth (credential sync)
+export const claudeAuth = {
+  status: () => request<ClaudeAuthStatus>('GET', '/claude-auth/status'),
+  clear: () => request<void>('DELETE', '/claude-auth/'),
 };
 
 // GitHub Auth

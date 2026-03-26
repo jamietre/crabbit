@@ -24,6 +24,13 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("opening database at {}", config.db_path);
     let conn = crabbit_server::db::open_db(&config.db_path)?;
 
+    // Recover from any crash that left tasks or agent state stuck
+    let recovered = crabbit_server::db::tasks::reset_in_progress_tasks(&conn)?;
+    crabbit_server::db::agent::recover_agent_state(&conn)?;
+    if recovered > 0 {
+        tracing::warn!("startup: reset {} in_progress task(s) to pending", recovered);
+    }
+
     let state = crabbit_server::state::AppState::new(conn, config.clone());
     let router = crabbit_server::routes::build_router(state);
 

@@ -90,6 +90,7 @@ pub fn update_task_status(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_task_outcome(
     conn: &Connection,
     id: i64,
@@ -149,6 +150,15 @@ pub fn list_task_events(conn: &Connection, task_id: i64) -> anyhow::Result<Vec<T
             Ok(TaskEvent { id, task_id, event_type, payload, created_at })
         })
         .collect()
+}
+
+pub fn reset_in_progress_tasks(conn: &Connection) -> anyhow::Result<usize> {
+    let n = conn.execute(
+        "UPDATE tasks SET status = 'pending', updated_at = strftime('%s','now')
+         WHERE status = 'in_progress'",
+        [],
+    ).context("reset_in_progress_tasks")?;
+    Ok(n)
 }
 
 fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
@@ -212,6 +222,17 @@ mod tests {
         let pending = list_tasks(&conn, Some(&TaskStatus::Pending), None, 100, 0).unwrap();
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].issue_number, 1);
+    }
+
+    #[test]
+    fn reset_in_progress_resets_to_pending() {
+        let (conn, repo_id) = setup();
+        let id = insert_task(&conn, repo_id, 1, "t", "u", "b", 1_700_000_000).unwrap();
+        update_task_status(&conn, id, &TaskStatus::InProgress, 1_700_000_001).unwrap();
+        let n = reset_in_progress_tasks(&conn).unwrap();
+        assert_eq!(n, 1);
+        let t = get_task(&conn, id).unwrap().unwrap();
+        assert_eq!(t.status, TaskStatus::Pending);
     }
 
     #[test]

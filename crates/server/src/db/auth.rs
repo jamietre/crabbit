@@ -44,6 +44,17 @@ pub fn set_github_auth(
     Ok(())
 }
 
+/// Nulls the token only, preserving login/scopes so the UI can show
+/// "Token for @username expired" rather than "not connected".
+pub fn expire_github_token(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE github_auth SET access_token = NULL WHERE id = 1",
+        [],
+    )
+    .context("expire_github_token")?;
+    Ok(())
+}
+
 pub fn clear_github_auth(conn: &Connection) -> anyhow::Result<()> {
     conn.execute(
         "UPDATE github_auth SET access_token = NULL, token_scopes = NULL, github_login = NULL, connected_at = NULL WHERE id = 1",

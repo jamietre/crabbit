@@ -21,6 +21,10 @@ pub struct Config {
     /// Path to agent.env passed as CRABBIT_CONFIG when spawning the orchestrator
     #[serde(default = "default_agent_env")]
     pub agent_env: String,
+
+    /// Shared secret required by PUT /api/v1/claude-auth.
+    /// Set this to a random string and use the same value in the desktop sync daemon.
+    pub claude_sync_secret: Option<String>,
 }
 
 fn default_bind() -> String {

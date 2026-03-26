@@ -209,9 +209,25 @@ export GITHUB_TOKEN="$GH_TOKEN"  # gh CLI reads either
 
 REPO_DIR="${WORKDIR}/repos/${REPO_OWNER}/${REPO_NAME}"
 
+_gh_auth_check() {
+    # Call after any gh/git failure to detect expired GitHub token
+    local stderr_file="$1"
+    if grep -qiE "401|authentication|credentials|token|unauthorized" "$stderr_file" 2>/dev/null; then
+        log "GitHub authentication failed — token may have expired. Reconnect via the Crabbit UI."
+        api_patch "/tasks/${TASK_ID}" \
+            '{"status": "failed", "error_message": "GitHub authentication failed — token expired. Reconnect via the Crabbit UI."}' \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        _state_managed=1; exit 0
+    fi
+}
+
 if [ -d "${REPO_DIR}/.git" ]; then
     log "Updating existing clone at ${REPO_DIR}..."
-    git -C "$REPO_DIR" fetch --quiet origin
+    GH_ERR="${WORKDIR}/gh-error.txt"
+    if ! git -C "$REPO_DIR" fetch --quiet origin 2>"$GH_ERR"; then
+        _gh_auth_check "$GH_ERR"
+    fi
     git -C "$REPO_DIR" checkout --quiet main 2>/dev/null \
         || git -C "$REPO_DIR" checkout --quiet master 2>/dev/null \
         || true
@@ -219,7 +235,11 @@ if [ -d "${REPO_DIR}/.git" ]; then
 else
     log "Cloning ${REPO_OWNER}/${REPO_NAME}..."
     mkdir -p "$(dirname "$REPO_DIR")"
-    gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet
+    GH_ERR="${WORKDIR}/gh-error.txt"
+    if ! gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
+        _gh_auth_check "$GH_ERR"
+        die "gh repo clone failed"
+    fi
 fi
 
 log "Repo ready at ${REPO_DIR}"
@@ -234,15 +254,36 @@ CLAUDE_USAGE_LIMIT=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.usage_limit_pct 
 CLAUDE_PROMPT_APPEND=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.system_prompt_append // empty')
 ALLOW_BROWSER=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automation')
 
-# ── Step 8b: Check Claude Pro usage percentage ────────────────────────────────
+# ── Step 8b: Fetch Claude OAuth token from API ────────────────────────────────
 
-# Fetch usage from Anthropic API using the OAuth token from credentials file.
+# The credential sync daemon pushes the OAuth token to the server, where it is
+# stored encrypted.  We fetch and export it here so Claude CLI picks it up as
+# CLAUDE_CODE_OAUTH_TOKEN without needing any local credentials file.
+
+CLAUDE_AUTH_RESP=$(api_get "/claude-auth/token" 2>/dev/null || true)
+STORED_OAUTH_TOKEN=$(printf '%s\n' "$CLAUDE_AUTH_RESP" | jq -r '.oauth_token // empty' 2>/dev/null || true)
+
+if [ -n "$STORED_OAUTH_TOKEN" ]; then
+    export CLAUDE_CODE_OAUTH_TOKEN="$STORED_OAUTH_TOKEN"
+    log "Claude OAuth token loaded from API."
+else
+    log "No stored Claude OAuth token — relying on local credentials."
+fi
+
+# ── Step 8c: Check Claude Pro usage percentage ────────────────────────────────
+
+# Fetch usage from Anthropic API using the OAuth token.
 # Store the result in agent state and enforce usage_limit_pct if configured.
 CLAUDE_USAGE_PCT=""
 CLAUDE_USAGE_RESET=""
 
 get_oauth_token() {
-    # Try CCS per-instance credentials first, then global
+    # Prefer the token already exported from the API (step 8b)
+    if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+        printf '%s' "$CLAUDE_CODE_OAUTH_TOKEN"
+        return 0
+    fi
+    # Fallback: try CCS per-instance credentials or global ~/.claude credentials
     for creds in "${CLAUDE_CONFIG_DIR:-}/.credentials.json" "${HOME}/.claude/.credentials.json"; do
         [ -f "$creds" ] || continue
         tok=$(jq -r '.claudeAiOauth.accessToken // empty' "$creds" 2>/dev/null)
@@ -400,18 +441,34 @@ CLAUDE_LOG="${WORKDIR}/claude-output.jsonl"
 
 # Stream output: each line of stream-json is posted as a claude_output event
 # and also written to a local log file.
+# Use a subshell with pipefail to capture claude's real exit code through the pipe.
 # shellcheck disable=SC2086
-claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read -r line; do
-    # Post each stream-json line as an event (fire-and-forget, ignore failures)
-    curl -sf -X POST \
-        -H "Content-Type: application/json" \
-        -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
-        "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
-done || CLAUDE_EXIT=$?
+CLAUDE_EXIT=0
+(
+    set -o pipefail 2>/dev/null || true
+    claude $CLAUDE_FLAGS < "$PROMPT_FILE" 2>&1 | tee "$CLAUDE_LOG" | while IFS= read -r line; do
+        curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
+            "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
+    done
+) || CLAUDE_EXIT=$?
 
 log "Claude exited with code ${CLAUDE_EXIT}"
 
 # ── Step 11: Read outcome ─────────────────────────────────────────────────────
+
+# Check for Claude authentication failure before treating as a generic error.
+if [ "$CLAUDE_EXIT" -ne 0 ]; then
+    if grep -qiE "not authenticated|authentication required|please log in|invalid credentials|oauth|api key" "$CLAUDE_LOG" 2>/dev/null; then
+        log "Claude CLI is not authenticated."
+        api_patch "/tasks/${TASK_ID}" \
+            '{"status": "failed", "error_message": "Claude CLI not authenticated — push credentials via the desktop sync daemon or run '\''claude login'\'' on the server."}' \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        _state_managed=1; exit 0
+    fi
+fi
 
 if [ ! -f "$OUTCOME_FILE" ]; then
     log "WARNING: Claude did not write outcome.json. Marking as failed."

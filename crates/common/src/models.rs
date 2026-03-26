@@ -154,6 +154,20 @@ pub struct UpdateAgentStateRequest {
     pub usage_reset_at: Option<i64>,
 }
 
+// ── Claude Auth ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeAuthStatus {
+    pub configured: bool,
+    pub updated_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PushClaudeAuthRequest {
+    pub oauth_token: String,
+    pub sync_secret: String,
+}
+
 // ── GitHub Auth ──────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

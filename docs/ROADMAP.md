@@ -2,7 +2,9 @@
 
 ## Deployment context
 
-Crabbit runs on a personal server inside an LXC or Docker container on a private network. It is not exposed to the public internet. Security hardening, multi-user support, and web UI authentication are explicitly out of scope until the system is proven reliable enough to warrant them.
+Crabbit runs on a personal Proxmox server inside an LXC container on a private network. It is not exposed to the public internet. Security hardening, multi-user support, and web UI authentication are explicitly out of scope until the system is proven reliable enough to warrant them.
+
+The target deployment is a plain Linux environment (Debian/Ubuntu), not Docker. A general-purpose install script is the right packaging primitive — Docker adds unnecessary indirection when Proxmox LXC containers already provide the isolation.
 
 ---
 
@@ -14,7 +16,7 @@ Known gaps:
 - Claude CLI authentication requires a browser OAuth flow that does not work headlessly
 - A crashed orchestrator can leave tasks stuck in `in_progress` indefinitely
 - GitHub token expiry fails silently
-- No container packaging — all dependencies are installed ad-hoc on the host
+- No install script — all dependencies are installed ad-hoc on the host
 
 ---
 
@@ -22,17 +24,32 @@ Known gaps:
 
 *Goal: run unattended on a server without needing to SSH in to fix things.*
 
-### 1.1 Docker packaging
-Produce a `Dockerfile` and `docker-compose.yml` that bundle the server binary, `claude` CLI, `gh` CLI, `git`, `node`, and `python3`. The image should be the single artefact needed to run Crabbit on any Linux host.
+### 1.1 Linux install script
+Produce an `install.sh` that sets up Crabbit on a plain Debian/Ubuntu machine (the natural target for a Proxmox LXC container). The script should:
+- Install system dependencies: `git`, `gh` CLI, `node`, `python3`, `curl`, `jq`
+- Install the `claude` CLI
+- Download or build the `crabbit-server` binary
+- Copy the orchestrator scripts to `~/.config/crabbit/`
+- Install and enable the systemd units (server service + agent timer)
+- Print next steps for config and first-time auth
+
+Docker is explicitly not the target — Proxmox LXC containers already provide the necessary isolation and Docker adds unnecessary indirection.
 
 ### 1.2 Claude CLI authentication in a headless container
-The `claude` CLI uses browser-based OAuth which cannot run in a container. Three options, in order of preference:
+The `claude` CLI uses browser-based OAuth which cannot run headlessly. The preferred solution is a **credential sync daemon** running on the desktop machine:
 
-- **Mount `~/.claude` as a volume** — authenticate once on the host, mount the credentials directory into the container. Requires occasional SSH re-auth when the token expires but is otherwise transparent.
-- **`CLAUDE_CODE_OAUTH_TOKEN` env var** — extract the OAuth token and pass it as a container secret. Easier to rotate without touching the filesystem.
-- **`ANTHROPIC_API_KEY`** — use the API directly instead of a Pro account. Loses usage-percentage tracking; costs money per run; but operationally the simplest long-term.
+- A small watcher process monitors `~/.claude/.credentials.json` for changes (via `inotifywait` on Linux / FSEvents on macOS)
+- On change, it POSTs the updated OAuth token to a Crabbit API endpoint (`PUT /api/v1/claude-auth`)
+- The server stores it encrypted (same pattern as the GitHub token) and the orchestrator reads it at runtime via `CLAUDE_CODE_OAUTH_TOKEN`
+- Re-authentication on the desktop propagates to the server automatically within seconds — no SSH required
 
-The container packaging work (1.1) should support all three modes via environment variables so the choice can be deferred.
+This approach works across machines (not just same-host volume mounts), requires no filesystem coupling between desktop and server, and makes token rotation completely transparent. Since Crabbit runs on a private network, the token travels over LAN only; a shared secret header on the endpoint is sufficient protection.
+
+The `install.sh` (1.1) should include a companion `install-desktop-sync.sh` that sets up the watcher as a background service on the desktop machine.
+
+Other options (noted for completeness, not preferred):
+- **Mount `~/.claude` as a volume** — only works when container is on the same host; requires SSH to re-auth
+- **`ANTHROPIC_API_KEY`** — uses the pay-per-token API instead of Pro; loses usage tracking
 
 ### 1.3 Stuck task recovery on startup
 Any task in `in_progress` status when the server starts indicates the previous run crashed without cleaning up. On startup, reset all `in_progress` tasks to `pending` and set agent status to `idle`.
@@ -79,7 +96,10 @@ Replace the 30-minute polling timer with a GitHub webhook on `issues.labeled`. T
 ### 3.3 PR feedback loop
 When a reviewer leaves comments on a PR that Crabbit opened, create a follow-up task to address them. This closes the loop between code review and the agent, reducing the need for human intervention after the initial PR.
 
-### 3.4 Repo disk management
+### 3.4 Docker image
+Produce a `Dockerfile` and `docker-compose.yml` as an alternative deployment path for users who prefer containers over a bare Linux install. The install script (1.1) remains the primary target for Proxmox LXC deployments.
+
+### 3.5 Repo disk management
 Cloned repositories accumulate in `WORKDIR/repos/`. Add a configurable retention policy: re-clone fresh each run (safest, avoids stale branch confusion), or keep clones and prune repos that have not been used in N days.
 
 ---

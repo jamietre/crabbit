@@ -75,3 +75,10 @@ CREATE TABLE IF NOT EXISTS claude_settings (
     extra_flags              TEXT
 );
 INSERT OR IGNORE INTO claude_settings(id) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS claude_auth (
+    id          INTEGER PRIMARY KEY CHECK(id = 1),
+    oauth_token TEXT,
+    updated_at  INTEGER
+);
+INSERT OR IGNORE INTO claude_auth(id) VALUES (1);

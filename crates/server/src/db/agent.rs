@@ -50,6 +50,15 @@ pub fn set_agent_state(conn: &Connection, req: &UpdateAgentStateRequest) -> anyh
     Ok(())
 }
 
+pub fn recover_agent_state(conn: &Connection) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE agent_state SET status = 'idle', current_task_id = NULL
+         WHERE status = 'running'",
+        [],
+    ).context("recover_agent_state")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,6 +71,23 @@ mod tests {
         let state = get_agent_state(&conn).unwrap();
         assert_eq!(state.status, AgentStatus::Idle);
         assert!(state.wake_at.is_none());
+    }
+
+    #[test]
+    fn recover_resets_running_to_idle() {
+        let conn = open_db(":memory:").unwrap();
+        set_agent_state(&conn, &UpdateAgentStateRequest {
+            status: Some(AgentStatus::Running),
+            wake_at: None,
+            current_task_id: None,
+            usage_note: None,
+            usage_pct_7d: None,
+            usage_reset_at: None,
+        }).unwrap();
+        recover_agent_state(&conn).unwrap();
+        let state = get_agent_state(&conn).unwrap();
+        assert_eq!(state.status, AgentStatus::Idle);
+        assert!(state.current_task_id.is_none());
     }
 
     #[test]

@@ -47,8 +47,11 @@ impl GitHubClient {
             req = req.query(&[("labels", label)]);
         }
 
-        let items: Vec<RawIssue> = req.send().await
-            .context("github request failed")?
+        let resp = req.send().await.context("github request failed")?;
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(anyhow::anyhow!("GITHUB_AUTH_EXPIRED"));
+        }
+        let items: Vec<RawIssue> = resp
             .error_for_status()
             .context("github API error")?
             .json()
@@ -119,6 +122,20 @@ mod tests {
         assert_eq!(issues.len(), 1);
         assert_eq!(issues[0].number, 42);
         assert_eq!(issues[0].title, "Fix the bug");
+    }
+
+    #[tokio::test]
+    async fn list_open_issues_returns_auth_expired_on_401() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/acme/api/issues"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&server)
+            .await;
+
+        let client = GitHubClient::new("bad_token".into(), server.uri());
+        let err = client.list_open_issues("acme", "api", None).await.unwrap_err();
+        assert!(err.to_string().contains("GITHUB_AUTH_EXPIRED"));
     }
 
     #[tokio::test]

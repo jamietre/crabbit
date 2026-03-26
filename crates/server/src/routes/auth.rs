@@ -31,10 +31,10 @@ async fn status(
     State(s): State<AppState>,
     Query(q): Query<StatusQuery>,
 ) -> ApiResult<GitHubAuthStatus> {
-    let mut auth = s.with_db(|c| db::get_github_auth_status(c))?;
+    let mut auth = s.with_db(db::get_github_auth_status)?;
     if q.include_token.unwrap_or(false) && auth.connected {
         // Decrypt and expose the token for the orchestrator
-        if let Ok(Some(enc)) = s.with_db(|c| db::get_github_token(c)) {
+        if let Ok(Some(enc)) = s.with_db(db::get_github_token) {
             if let Ok(key) = s.config.encryption_key() {
                 auth.access_token = crate::crypto::decrypt(&enc, &key).ok();
             }
@@ -112,15 +112,15 @@ async fn callback(
     let login = user["login"].as_str().unwrap_or("unknown").to_string();
 
     // Encrypt and store
-    let key = s.config.encryption_key().map_err(|e| ApiError::Internal(e))?;
-    let encrypted = crate::crypto::encrypt(&access_token, &key).map_err(|e| ApiError::Internal(e))?;
+    let key = s.config.encryption_key().map_err(ApiError::Internal)?;
+    let encrypted = crate::crypto::encrypt(&access_token, &key).map_err(ApiError::Internal)?;
     s.with_db(|c| db::set_github_auth(c, &encrypted, &scopes, &login, unix_now()))?;
 
     Ok(Redirect::to("/"))
 }
 
 async fn disconnect(State(s): State<AppState>) -> Result<StatusCode, ApiError> {
-    s.with_db(|c| db::clear_github_auth(c))?;
+    s.with_db(db::clear_github_auth)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
