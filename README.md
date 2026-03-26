@@ -2,6 +2,13 @@
 
 Crabbit is an autonomous GitHub issue agent. It watches your repositories for open issues, picks them up one at a time, invokes Claude Code to implement a fix, and opens a pull request — all without human intervention.
 
+
+---
+
+## Current State
+
+Very early. It worked at least once. No security. No guardrails. Recommend only running in an isolated container or VM.
+
 ---
 
 ## How it works
