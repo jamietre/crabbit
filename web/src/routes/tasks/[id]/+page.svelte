@@ -45,6 +45,13 @@
     window.location.href = '/tasks';
   }
 
+  async function requeueTask() {
+    if (!task) return;
+    await tasksApi.updateStatus(task.id, 'pending');
+    task = await tasksApi.get(task.id);
+    startPolling();
+  }
+
   function formatTime(ts: number) {
     return new Date(ts * 1000).toLocaleString();
   }
@@ -110,6 +117,26 @@
           imageFilename: event.payload.filename as string ?? 'screenshot.png',
         });
 
+      } else if (event.event_type === 'context_summary') {
+        const content = event.payload.content as string ?? '';
+        const firstLine = content.split('\n').find(l => l.trim()) ?? 'Context summary';
+        entries.push({
+          ts, label: 'Context',
+          preview: firstLine.replace(/^#+\s*/, '').slice(0, 120),
+          detail: content,
+          detailKind: 'text',
+        });
+
+      } else if (event.event_type === 'comment_posted') {
+        const comment = event.payload.comment as string ?? '';
+        const firstLine = comment.split('\n')[0].slice(0, 120);
+        entries.push({
+          ts, label: 'Comment',
+          preview: firstLine + (comment.length > firstLine.length ? '…' : ''),
+          detail: comment.length > firstLine.length ? comment : undefined,
+          detailKind: 'text',
+        });
+
       } else {
         const json = JSON.stringify(event.payload, null, 2);
         const preview = json.slice(0, 100).replace(/\n/g, ' ');
@@ -149,7 +176,10 @@
     {#if task.pr_url}
       <a href={task.pr_url} target="_blank" rel="noopener" class="pr-link">PR #{task.pr_number} ↗</a>
     {/if}
-    {#if task.status === 'failed' || task.status === 'retrying' || task.status === 'needs_human' || task.status === 'in_progress'}
+    {#if task.status === 'needs_human'}
+      <button on:click={requeueTask} class="btn-requeue">Re-queue</button>
+      <button on:click={resetTask} class="btn-danger">Reset</button>
+    {:else if task.status === 'failed' || task.status === 'retrying' || task.status === 'in_progress'}
       <button on:click={resetTask} class="btn-danger">Reset</button>
     {/if}
   </div>
@@ -254,5 +284,6 @@
   .muted { color: var(--color-text-muted); }
   .error { color: var(--color-error); }
   .btn-danger { color: var(--color-error); border-color: var(--color-error); }
+  .btn-requeue { color: var(--color-warning, #f59e0b); border-color: var(--color-warning, #f59e0b); }
   .retry-badge { font-size: 11px; color: var(--color-text-muted); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 4px; padding: 2px 6px; }
 </style>
