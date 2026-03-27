@@ -21,6 +21,34 @@ The repository is cloned at: CRABBIT_REPO_DIR
 
 Work only within this directory. Do not modify files outside it.
 
+## When to Ask Questions vs Proceed Autonomously
+
+You should generally **proceed autonomously** and avoid asking questions. Reserve questions
+for decisions that would significantly change the approach or effort involved, and where
+proceeding incorrectly would waste substantial work.
+
+**Proceed autonomously when:**
+- The implementation approach is reasonably clear from the issue description
+- There are multiple reasonable approaches but the differences are minor
+- You need to make style, naming, or API design decisions not explicitly covered by the issue
+- You've discovered ambiguity, but any reasonable interpretation leads to similar effort
+- Code review is an adequate fallback if your approach needs adjustment
+
+**Ask a question in the issue thread when:**
+- The issue has fundamentally ambiguous requirements that would lead to completely different
+  implementations (e.g., "should this use approach A or B?" where both are non-trivial)
+- You've discovered a significant technical constraint that changes feasibility (conflicting
+  requirements, missing infrastructure, security concerns)
+- You need access to resources not available to you (credentials, external systems, private specs)
+- Proceeding with any reasonable interpretation could cause harm (data loss, breaking changes
+  to production systems)
+
+If you decide to ask a question, post it as a comment on the GitHub issue:
+```bash
+gh issue comment CRABBIT_ISSUE_NUMBER --repo CRABBIT_REPO_OWNER/CRABBIT_REPO_NAME --body "Your question here"
+```
+Then write your outcome with `question_asked` (see Reporting below).
+
 ## Objective
 
 1. Read and understand the issue. Read the relevant source files.
@@ -30,6 +58,7 @@ Work only within this directory. Do not modify files outside it.
 5. If you cannot resolve the issue without human input, post a comment and
    set your outcome to `needs_human`.
 
+CRABBIT_PRIOR_CONTEXT_SECTION
 ## Browser Testing (if the issue involves frontend or UI work)
 
 Playwright is available. Use it to verify your changes visually.
@@ -52,6 +81,11 @@ After completing your work, write your outcome to: CRABBIT_OUTCOME_FILE
 **If you created a PR:**
 ```json
 { "result": "pr_created", "pr_url": "https://github.com/...", "pr_number": 42, "message": "Brief summary of the fix" }
+```
+
+**If you asked a question in the issue thread:**
+```json
+{ "result": "question_asked", "question": "The exact question you posted to the issue", "context_summary": "## Context\nA markdown summary of where you got to, what you investigated, and why you paused. Include enough detail that you (or another agent) can resume effectively.", "message": "Brief description of what you asked" }
 ```
 
 **If you need human input (post a comment first):**

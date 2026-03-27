@@ -359,13 +359,46 @@ rm -f "$OUTCOME_FILE"
 rm -rf "$SCREENSHOTS_DIR"
 mkdir -p "$SCREENSHOTS_DIR"
 
+# Fetch prior context summary if this is a resumed task (existing_task_id was set)
+PRIOR_CONTEXT=""
+if [ -n "$EXISTING_TASK_ID" ]; then
+    log "Fetching prior context for task #${TASK_ID}..."
+    TASK_EVENTS=$(api_get "/tasks/${TASK_ID}/events" 2>/dev/null || true)
+    if [ -n "$TASK_EVENTS" ]; then
+        # Extract the most recent context_summary event payload
+        PRIOR_CONTEXT=$(printf '%s\n' "$TASK_EVENTS" \
+            | jq -r '[.[] | select(.event_type == "context_summary")] | last | .payload.content // empty' \
+            2>/dev/null || true)
+    fi
+    if [ -n "$PRIOR_CONTEXT" ]; then
+        log "Prior context found ($(printf '%s' "$PRIOR_CONTEXT" | wc -c) chars). Injecting into prompt."
+    else
+        log "No prior context found for this task."
+    fi
+fi
+
 # Render template by substituting CRABBIT_* placeholders
 # Use Python for safe substitution (avoids sed issues with special chars in issue body)
 python3 - <<PYEOF
-import sys
+import sys, re
 
 with open("$TEMPLATE") as f:
     template = f.read()
+
+prior_context = """${PRIOR_CONTEXT}"""
+
+# Build the prior context section (injected where CRABBIT_PRIOR_CONTEXT_SECTION placeholder is)
+if prior_context.strip():
+    prior_context_section = (
+        "## Prior Context\n\n"
+        "This task was previously paused. Here is the context summary from when it was paused:\n\n"
+        "---\n"
+        + prior_context.strip()
+        + "\n---\n\n"
+        "Use this to understand the previous state and continue from where the agent left off.\n\n"
+    )
+else:
+    prior_context_section = ""
 
 replacements = {
     "CRABBIT_REPO_OWNER": """${REPO_OWNER}""",
@@ -379,12 +412,12 @@ replacements = {
     "CRABBIT_OUTCOME_FILE": """${OUTCOME_FILE}""",
     "CRABBIT_TASK_ID": """${TASK_ID}""",
     "CRABBIT_API_URL": """${CRABBIT_API_URL}""",
+    "CRABBIT_PRIOR_CONTEXT_SECTION": prior_context_section,
 }
 
 # Remove the browser testing section if allow_browser_automation is false
 allow_browser = """${ALLOW_BROWSER}""" == "true"
 if not allow_browser:
-    import re
     template = re.sub(
         r'## Browser Testing.*?(?=## Reporting Your Outcome)',
         '',
@@ -541,6 +574,41 @@ case "$RESULT" in
         api_patch "/tasks/${TASK_ID}" "$PATCH_BODY" > /dev/null
         api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
         log "PR created: ${PR_URL}"
+        ;;
+
+    question_asked)
+        QUESTION=$(printf '%s\n' "$OUTCOME"        | jq -r '.question // ""')
+        CONTEXT_SUMMARY=$(printf '%s\n' "$OUTCOME" | jq -r '.context_summary // ""')
+        MESSAGE=$(printf '%s\n' "$OUTCOME"         | jq -r '.message // "Question posted to issue thread"')
+
+        # Post the question as a comment on the GitHub issue
+        if [ -n "$QUESTION" ]; then
+            log "Posting question to ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER}..."
+            if gh issue comment "$ISSUE_NUMBER" \
+                    --repo "${REPO_OWNER}/${REPO_NAME}" \
+                    --body "$QUESTION" > /dev/null 2>&1; then
+                log "Question posted to issue thread."
+                api_post "/tasks/${TASK_ID}/events" \
+                    "{\"event_type\": \"comment_posted\", \"payload\": {\"comment\": $(printf '%s\n' "$QUESTION" | jq -Rs .)}}" \
+                    > /dev/null 2>&1 || true
+            else
+                log "WARNING: failed to post question to GitHub issue."
+            fi
+        fi
+
+        # Save context summary as a task event so it can be loaded on resume
+        if [ -n "$CONTEXT_SUMMARY" ]; then
+            api_post "/tasks/${TASK_ID}/events" \
+                "{\"event_type\": \"context_summary\", \"payload\": {\"content\": $(printf '%s\n' "$CONTEXT_SUMMARY" | jq -Rs .)}}" \
+                > /dev/null 2>&1 || true
+            log "Context summary saved."
+        fi
+
+        api_patch "/tasks/${TASK_ID}" \
+            "{\"status\": \"needs_human\", \"error_message\": $(printf '%s\n' "$MESSAGE" | jq -Rs .)}" \
+            > /dev/null
+        api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        log "Question asked: ${MESSAGE}"
         ;;
 
     needs_human)
