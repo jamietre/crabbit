@@ -2,6 +2,10 @@
 
 This is not a roadmap. This is a stream of consciousness of things that I want to implement. They have not been thought out yet. 
 
+[ ] Make skill for using gh
+[ ] Agent should, during the course of a pull request, open issue to iumprove itself if it identifies shortcomings that could either reduce agent effort or improve outcomes thorugh better workflow
+[ ] Admin email to notify of failures/persistent failures
+[ ] UX - buttons should change state/disbale after pressing, loading indicator before results
 [ ] What is wake-up algorithm? Need finer grained control over usage, esp. 7 day
 [ ] Support multiple claude pro accounts
 [ ] If limits hit during implementation, task should be resumable. Context should be preserved. (Have a status for "locked" on a task - won't be picked up if agent is currently working on it)

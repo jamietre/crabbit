@@ -7,6 +7,7 @@
   const labels: Record<string, string> = {
     pending: 'Pending',
     in_progress: 'In Progress',
+    retrying: 'Retrying',
     pr_created: 'PR Created',
     needs_human: 'Needs Human',
     failed: 'Failed',

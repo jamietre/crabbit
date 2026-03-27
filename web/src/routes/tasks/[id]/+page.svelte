@@ -11,6 +11,7 @@
   let pollInterval: ReturnType<typeof setInterval> | null = null;
 
   const TERMINAL = new Set(['pr_created', 'needs_human', 'failed', 'skipped']);
+  // retrying is not terminal — keep polling until it becomes in_progress
 
   onMount(async () => {
     try {
@@ -138,8 +139,8 @@
   <div class="task-header">
     <h1>{task.issue_title}</h1>
     <StatusBadge status={task.status} />
-    {#if task.status === 'failed' && task.retry_count > 0}
-      <span class="retry-badge">retried {task.retry_count}/2</span>
+    {#if (task.status === 'failed' || task.status === 'retrying') && task.retry_count > 0}
+      <span class="retry-badge">retry {task.retry_count}/2</span>
     {/if}
   </div>
 
@@ -148,9 +149,7 @@
     {#if task.pr_url}
       <a href={task.pr_url} target="_blank" rel="noopener" class="pr-link">PR #{task.pr_number} ↗</a>
     {/if}
-    {#if task.status === 'failed' && task.retry_count >= 2}
-      <button on:click={resetTask} class="btn-danger">Reset</button>
-    {:else if task.status === 'failed' || task.status === 'needs_human' || task.status === 'in_progress'}
+    {#if task.status === 'failed' || task.status === 'retrying' || task.status === 'needs_human' || task.status === 'in_progress'}
       <button on:click={resetTask} class="btn-danger">Reset</button>
     {/if}
   </div>

@@ -20,6 +20,7 @@ fn make_server() -> TestServer {
         orchestrator_script: "/dev/null".into(),
         agent_env: "/dev/null".into(),
         claude_sync_secret: None,
+        claude_credentials_path: None,
     };
     let state = AppState::new(conn, config);
     TestServer::new(build_router(state)).unwrap()

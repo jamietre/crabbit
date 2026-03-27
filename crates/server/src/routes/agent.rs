@@ -85,25 +85,7 @@ async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueRe
                         existing_task_id: None,
                     })));
                 }
-                Some(t) if t.status == TaskStatus::Pending => {
-                    return Ok(Json(Some(NextIssueResponse {
-                        repo_id: repo.id,
-                        repo_owner: repo.owner,
-                        repo_name: repo.name,
-                        issue_number: issue.number,
-                        issue_title: issue.title,
-                        issue_url: issue.html_url,
-                        issue_body: issue.body,
-                        existing_task_id: Some(t.id),
-                    })));
-                }
-                Some(t) if t.status == TaskStatus::Failed && t.retry_count < 2 => {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64;
-                    s.with_db(|c| crate::db::tasks::increment_retry_count(c, t.id, now))?;
-                    s.with_db(|c| crate::db::tasks::update_task_status(c, t.id, &TaskStatus::Pending, now))?;
+                Some(t) if t.status == TaskStatus::Pending || t.status == TaskStatus::Retrying => {
                     return Ok(Json(Some(NextIssueResponse {
                         repo_id: repo.id,
                         repo_owner: repo.owner,

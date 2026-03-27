@@ -59,14 +59,23 @@ async fn update(
     Path(id): Path<i64>,
     Json(req): Json<UpdateTaskRequest>,
 ) -> ApiResult<Task> {
-    s.with_db(|c| db::get_task(c, id))?.ok_or_else(|| ApiError::NotFound("task".into()))?;
+    let task = s.with_db(|c| db::get_task(c, id))?.ok_or_else(|| ApiError::NotFound("task".into()))?;
     let now = unix_now();
-    if let Some(ref status) = req.status {
+
+    // When the orchestrator marks a task failed, auto-transition to retrying if retries remain.
+    let effective_status = match req.status {
+        Some(TaskStatus::Failed) if task.retry_count < 2 => {
+            s.with_db(|c| db::increment_retry_count(c, task.id, now))?;
+            Some(TaskStatus::Retrying)
+        }
+        other => other,
+    };
+
+    if let Some(ref status) = effective_status {
         s.with_db(|c| db::update_task_status(c, id, status, now))?;
     }
     if req.pr_url.is_some() || req.pr_number.is_some() || req.error_message.is_some() || req.claude_session_id.is_some() {
-        let task = s.with_db(|c| db::get_task(c, id))?.unwrap();
-        let status = req.status.as_ref().unwrap_or(&task.status);
+        let status = effective_status.as_ref().unwrap_or(&task.status);
         s.with_db(|c| db::update_task_outcome(
             c, id, status,
             req.pr_url.as_deref().or(task.pr_url.as_deref()),

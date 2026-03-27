@@ -20,9 +20,18 @@ fi
 # If the agent env sets CLAUDE_CONFIG_DIR, export it and ensure the directory
 # exists so Claude does not load the user's personal settings.json / hooks.
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    # Wipe and recreate so stale state from previous runs doesn't interfere.
-    rm -rf "$CLAUDE_CONFIG_DIR"
-    mkdir -p "$CLAUDE_CONFIG_DIR"
+    # Preserve .credentials.json so Claude can manage its own token rotation.
+    # Remove everything else so personal settings/hooks don't bleed in.
+    if [ -d "$CLAUDE_CONFIG_DIR" ] && [ -f "${CLAUDE_CONFIG_DIR}/.credentials.json" ]; then
+        _saved_creds=$(cat "${CLAUDE_CONFIG_DIR}/.credentials.json")
+        rm -rf "$CLAUDE_CONFIG_DIR"
+        mkdir -p "$CLAUDE_CONFIG_DIR"
+        printf '%s' "$_saved_creds" > "${CLAUDE_CONFIG_DIR}/.credentials.json"
+        unset _saved_creds
+    else
+        rm -rf "$CLAUDE_CONFIG_DIR"
+        mkdir -p "$CLAUDE_CONFIG_DIR"
+    fi
     CLAUDE_CONFIG_DIR="$(cd "$CLAUDE_CONFIG_DIR" && pwd)"
     export CLAUDE_CONFIG_DIR
 fi
@@ -263,28 +272,6 @@ CLAUDE_BUDGET=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.max_budget_usd // emp
 CLAUDE_USAGE_LIMIT=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.usage_limit_pct // empty')
 CLAUDE_PROMPT_APPEND=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.system_prompt_append // empty')
 ALLOW_BROWSER=$(printf '%s\n' "$CLAUDE_SETTINGS" | jq -r '.allow_browser_automation')
-
-# ── Step 8b: Fetch Claude OAuth token from API ────────────────────────────────
-
-# The credential sync daemon pushes the OAuth token to the server, where it is
-# stored encrypted.  We fetch and export it here so Claude CLI picks it up as
-# CLAUDE_CODE_OAUTH_TOKEN without needing any local credentials file.
-
-CLAUDE_AUTH_RESP=$(api_get "/claude-auth/token" 2>/dev/null || true)
-STORED_CREDS_JSON=$(printf '%s\n' "$CLAUDE_AUTH_RESP" | jq -r '.credentials_json // empty' 2>/dev/null || true)
-
-if [ -n "$STORED_CREDS_JSON" ] && [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    # Write full credentials to isolated config dir so Claude can auto-refresh.
-    printf '%s' "$STORED_CREDS_JSON" > "${CLAUDE_CONFIG_DIR}/.credentials.json"
-    log "Claude credentials written to isolated config dir."
-elif [ -n "$STORED_CREDS_JSON" ]; then
-    # Fallback: export the access token directly (no auto-refresh possible)
-    STORED_OAUTH_TOKEN=$(printf '%s\n' "$STORED_CREDS_JSON" | jq -r '.claudeAiOauth.accessToken // empty' 2>/dev/null || true)
-    [ -n "$STORED_OAUTH_TOKEN" ] && export CLAUDE_CODE_OAUTH_TOKEN="$STORED_OAUTH_TOKEN"
-    log "Claude OAuth token loaded from API (no CLAUDE_CONFIG_DIR set)."
-else
-    log "No stored Claude credentials — relying on local credentials."
-fi
 
 # ── Step 8c: Check Claude Pro usage percentage ────────────────────────────────
 

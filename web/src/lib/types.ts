@@ -3,6 +3,7 @@
 export type TaskStatus =
   | 'pending'
   | 'in_progress'
+  | 'retrying'
   | 'pr_created'
   | 'needs_human'
   | 'failed'

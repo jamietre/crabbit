@@ -3,7 +3,6 @@ use rusqlite::Connection;
 
 pub mod agent;
 pub mod auth;
-pub mod claude_auth;
 pub mod repos;
 pub mod settings;
 pub mod tasks;

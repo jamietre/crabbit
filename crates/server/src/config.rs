@@ -25,6 +25,11 @@ pub struct Config {
     /// Shared secret required by PUT /api/v1/claude-auth.
     /// Set this to a random string and use the same value in the desktop sync daemon.
     pub claude_sync_secret: Option<String>,
+
+    /// Path where Claude credentials are stored on the server (e.g. the
+    /// .credentials.json file inside CLAUDE_CONFIG_DIR used by the orchestrator).
+    /// The sync daemon writes directly here; no DB round-trip needed.
+    pub claude_credentials_path: Option<String>,
 }
 
 fn default_bind() -> String {

@@ -12,6 +12,7 @@
 
   --status-pending: #6b7280;
   --status-in_progress: var(--color-info);
+  --status-retrying: var(--color-warning);
   --status-pr_created: var(--color-success);
   --status-needs_human: var(--color-warning);
   --status-failed: var(--color-error);

@@ -47,6 +47,7 @@ pub(crate) mod tests {
             orchestrator_script: "/dev/null".into(),
             agent_env: "/dev/null".into(),
             claude_sync_secret: None,
+            claude_credentials_path: None,
         }
     }
 

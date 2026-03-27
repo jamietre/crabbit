@@ -32,6 +32,7 @@ pub struct UpdateRepoRequest {
 pub enum TaskStatus {
     Pending,
     InProgress,
+    Retrying,
     PrCreated,
     NeedsHuman,
     Failed,
