@@ -344,6 +344,26 @@ else
     log "No OAuth token found; skipping usage check."
 fi
 
+# ── Step 8d: Fetch enabled prompts ───────────────────────────────────────────
+# Retrieve all enabled prompts from the DB (via API) and concatenate their
+# content into a single block that will be appended to the system prompt.
+
+PROMPTS_JSON=$(api_get "/prompts" 2>/dev/null || echo "[]")
+PROMPT_GUIDANCE=$(printf '%s\n' "$PROMPTS_JSON" \
+    | jq -r '
+        [.[] | select(.enabled == true)]
+        | group_by(.category)
+        | .[]
+        | "## " + (.[0].category | ascii_upcase) + " GUIDANCE\n\n"
+          + (map("### " + .name + (if .label != "" then " (" + .label + ")" else "" end) + "\n\n" + .content) | join("\n\n"))
+    ' 2>/dev/null | tr -d '\r' || true)
+
+if [ -n "$PROMPT_GUIDANCE" ]; then
+    log "Fetched $(printf '%s\n' "$PROMPTS_JSON" | jq '[.[] | select(.enabled == true)] | length') enabled prompt(s) from database."
+else
+    log "No enabled prompts found in database."
+fi
+
 # ── Step 9: Build prompt ──────────────────────────────────────────────────────
 
 PROMPT_FILE="${WORKDIR}/prompt.md"
@@ -446,10 +466,17 @@ if [ -n "$CLAUDE_BUDGET" ]; then
     CLAUDE_FLAGS="${CLAUDE_FLAGS} --max-budget-usd ${CLAUDE_BUDGET}"
 fi
 
-if [ -n "$CLAUDE_PROMPT_APPEND" ]; then
-    # Write to temp file to avoid quoting issues when passing to claude
+if [ -n "$CLAUDE_PROMPT_APPEND" ] || [ -n "$PROMPT_GUIDANCE" ]; then
     APPEND_FILE="${WORKDIR}/system-append.txt"
-    printf '%s' "$CLAUDE_PROMPT_APPEND" > "$APPEND_FILE"
+    # Write prompt guidance first, then user-configured append
+    : > "$APPEND_FILE"
+    if [ -n "$PROMPT_GUIDANCE" ]; then
+        printf '%s\n' "$PROMPT_GUIDANCE" >> "$APPEND_FILE"
+    fi
+    if [ -n "$CLAUDE_PROMPT_APPEND" ]; then
+        [ -n "$PROMPT_GUIDANCE" ] && printf '\n' >> "$APPEND_FILE"
+        printf '%s' "$CLAUDE_PROMPT_APPEND" >> "$APPEND_FILE"
+    fi
     CLAUDE_FLAGS="${CLAUDE_FLAGS} --append-system-prompt @${APPEND_FILE}"
 fi
 

@@ -24,6 +24,7 @@
     { href: '/', label: 'Dashboard' },
     { href: '/tasks', label: 'Tasks' },
     { href: '/repos', label: 'Repos' },
+    { href: '/prompts', label: 'Prompts' },
     { href: '/settings', label: 'Settings' },
   ];
 </script>

@@ -4,6 +4,7 @@ use crate::state::AppState;
 pub mod agent;
 pub mod auth;
 pub mod claude_auth;
+pub mod prompts;
 pub mod repos;
 pub mod settings;
 pub mod tasks;
@@ -16,6 +17,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/auth", auth::router())
         .nest("/claude-settings", settings::router())
         .nest("/claude-auth", claude_auth::router())
+        .nest("/prompts", prompts::router())
         .with_state(state.clone());
 
     Router::new()
