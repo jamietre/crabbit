@@ -54,7 +54,13 @@ Then write your outcome with `question_asked` (see Reporting below).
 1. Read and understand the issue. Read the relevant source files.
 2. Implement a fix on a new feature branch.
 3. Write or update tests if applicable. Run them.
-4. Create a pull request: `gh pr create --title "..." --body "..." --base main`
+4. Push your branch and open a pull request:
+   ```
+   git push origin <branch-name>
+   gh pr create --title "..." --body "..." --base main
+   ```
+   The working directory may be a fork — `gh pr create` will automatically target
+   the upstream repository, so no extra flags are needed.
 5. If you cannot resolve the issue without human input, post a comment and
    set your outcome to `needs_human`.
 
@@ -118,4 +124,4 @@ curl -s -X POST CRABBIT_API_URL/api/v1/tasks/CRABBIT_TASK_ID/events \
 - Work only within CRABBIT_REPO_DIR
 - Create a feature branch before making changes (e.g. `git checkout -b fix/issue-CRABBIT_ISSUE_NUMBER`)
 - Run the project's test suite before creating a PR
-- Do not push directly to main or master
+- Do not push directly to main or master — always use a feature branch
