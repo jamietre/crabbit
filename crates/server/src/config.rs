@@ -30,6 +30,11 @@ pub struct Config {
     /// .credentials.json file inside CLAUDE_CONFIG_DIR used by the orchestrator).
     /// The sync daemon writes directly here; no DB round-trip needed.
     pub claude_credentials_path: Option<String>,
+
+    /// If true, verify Claude auth against the Anthropic API at server startup.
+    /// Disable in dev to avoid unnecessary API calls.
+    #[serde(default)]
+    pub claude_auth_startup_check: bool,
 }
 
 fn default_bind() -> String {

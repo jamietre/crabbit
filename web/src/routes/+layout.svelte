@@ -2,20 +2,26 @@
 <script lang="ts">
   import '../app.css';
   import { page } from '$app/stores';
-  import { agentState, githubStatus, startPolling } from '$lib/stores';
-  import { agent, auth } from '$lib/api';
+  import { agentState, githubStatus, claudeAuthStatus, startPolling } from '$lib/stores';
+  import { agent, auth, claudeAuth } from '$lib/api';
   import { onMount } from 'svelte';
 
   export let data;
 
   $: agentState.set(data.agentState);
   $: githubStatus.set(data.githubStatus);
+  $: claudeAuthStatus.set(data.claudeAuthStatus);
 
   onMount(() => {
     const stop = startPolling(async () => {
-      const [a, g] = await Promise.all([agent.getState().catch(() => null), auth.status().catch(() => null)]);
+      const [a, g, c] = await Promise.all([
+        agent.getState().catch(() => null),
+        auth.status().catch(() => null),
+        claudeAuth.status().catch(() => null),
+      ]);
       agentState.set(a);
       githubStatus.set(g);
+      claudeAuthStatus.set(c);
     });
     return stop;
   });
@@ -27,6 +33,10 @@
     { href: '/prompts', label: 'Prompts' },
     { href: '/settings', label: 'Settings' },
   ];
+
+  $: claudeCheckOk   = $claudeAuthStatus?.check.status === 'ok';
+  $: claudeExpired   = $claudeAuthStatus?.check.status === 'expired';
+  $: claudeConfigured = $claudeAuthStatus?.configured;
 </script>
 
 <div class="shell">
@@ -39,11 +49,39 @@
     </div>
     <div class="nav-end">
       {#if $githubStatus?.connected}
-        <a class="gh-user" href="/auth">@{$githubStatus.github_login}</a>
+        <a class="conn-indicator" href="/auth" title="GitHub connected">
+          <span class="dot dot-ok"></span>@{$githubStatus.github_login}
+        </a>
       {:else if $githubStatus?.github_login}
-        <a class="gh-expired" href="/auth" title="GitHub token expired — click to reconnect">@{$githubStatus.github_login} (reconnect)</a>
+        <a class="conn-indicator" href="/auth" title="GitHub token expired — click to reconnect">
+          <span class="dot dot-error"></span>@{$githubStatus.github_login}
+        </a>
       {:else}
-        <a class="gh-connect" href="/auth">Connect GitHub</a>
+        <a class="conn-indicator warn" href="/auth" title="GitHub not connected">
+          <span class="dot dot-warn"></span>GitHub
+        </a>
+      {/if}
+      {#if claudeConfigured}
+        <a class="conn-indicator" href="/auth"
+          title="Claude auth {$claudeAuthStatus?.check.status ?? 'unknown'}">
+          <span class="dot" class:dot-ok={claudeCheckOk} class:dot-error={claudeExpired} class:dot-warn={!claudeCheckOk && !claudeExpired}></span>Claude
+        </a>
+      {:else}
+        <a class="conn-indicator warn" href="/auth" title="Claude credentials not configured">
+          <span class="dot dot-warn"></span>Claude
+        </a>
+      {/if}
+      {#if $agentState}
+        <span class="usage-pill"
+          title="5h Claude Pro usage"
+          data-warn={($agentState.usage_pct_5h ?? 0) >= 70}>
+          5h {$agentState.usage_pct_5h != null ? Math.round($agentState.usage_pct_5h) + '%' : '—'}
+        </span>
+        <span class="usage-pill"
+          title="7d Claude Pro usage"
+          data-warn={($agentState.usage_pct_7d ?? 0) >= 70}>
+          7d {$agentState.usage_pct_7d != null ? Math.round($agentState.usage_pct_7d) + '%' : '—'}
+        </span>
       {/if}
       {#if $agentState}
         <span class="agent-dot" data-status={$agentState.status} title="Agent {$agentState.status}"></span>
@@ -78,9 +116,20 @@
     color: var(--color-text); background: var(--color-border); text-decoration: none;
   }
   .nav-end { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-  .gh-user, .gh-connect, .gh-expired { font-size: 12px; }
-  .gh-connect { color: var(--color-warning); }
-  .gh-expired { color: var(--color-error); }
+
+  .conn-indicator {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 12px; color: var(--color-text-muted);
+  }
+  .conn-indicator.warn { color: var(--color-warning); }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--color-text-muted); flex-shrink: 0;
+  }
+  .dot-ok    { background: var(--color-success); }
+  .dot-warn  { background: var(--color-warning); }
+  .dot-error { background: var(--color-error); }
+
   .agent-dot {
     width: 8px; height: 8px; border-radius: 50%;
     background: var(--color-text-muted);
@@ -89,5 +138,12 @@
   .agent-dot[data-status="idle"] { background: var(--color-success); }
   .agent-dot[data-status="sleeping"] { background: var(--color-warning); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  .usage-pill {
+    font-size: 11px; color: var(--color-text-muted);
+    background: var(--color-border); border-radius: 10px;
+    padding: 2px 7px;
+  }
+  .usage-pill[data-warn="true"] { color: var(--color-warning); background: color-mix(in srgb, var(--color-warning) 15%, transparent); }
   main { flex: 1; padding: 24px; max-width: 1100px; margin: 0 auto; width: 100%; }
 </style>

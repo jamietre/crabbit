@@ -21,6 +21,7 @@ fn make_server() -> TestServer {
         agent_env: "/dev/null".into(),
         claude_sync_secret: None,
         claude_credentials_path: None,
+        claude_auth_startup_check: false,
     };
     let state = AppState::new(conn, config);
     TestServer::new(build_router(state)).unwrap()

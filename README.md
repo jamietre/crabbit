@@ -57,7 +57,7 @@ Note the **Client ID** and generate a **Client Secret**.
 
 ```bash
 mkdir -p ~/.config/crabbit
-cp docs/server-toml-example.toml ~/.config/crabbit/server.toml
+cp config/server.toml ~/.config/crabbit/server.toml
 ```
 
 Edit `~/.config/crabbit/server.toml`:
@@ -76,7 +76,7 @@ client_secret = "YOUR_CLIENT_SECRET"
 ### 3. Create the agent config
 
 ```bash
-cp docs/agent-env-example.env ~/.config/crabbit/agent.env
+cp config/agent.env ~/.config/crabbit/agent.env
 ```
 
 Edit `~/.config/crabbit/agent.env` — set `CRABBIT_API_KEY` to the same value as `api_key` in `server.toml`.

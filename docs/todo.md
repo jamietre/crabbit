@@ -2,6 +2,10 @@
 
 This is not a roadmap. This is a stream of consciousness of things that I want to implement. They have not been thought out yet. 
 
+
+[ ] Make a proper logger
+[ ] Always check state when retrying. For example, after Claude made a branch, I made a PR for it. Claude should ensure that 
+when resuming any task, it's in the same state he left it. If a new PR exists, then musti abort.
 [ ] Make skill for using gh
 [ ] Agent should, during the course of a pull request, open issue to iumprove itself if it identifies shortcomings that could either reduce agent effort or improve outcomes thorugh better workflow
 [ ] Admin email to notify of failures/persistent failures

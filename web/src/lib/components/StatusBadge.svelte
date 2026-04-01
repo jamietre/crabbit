@@ -5,6 +5,7 @@
   export let status: TaskStatus | AgentStatus;
 
   const labels: Record<string, string> = {
+    queued: 'Queued',
     pending: 'Pending',
     in_progress: 'In Progress',
     retrying: 'Retrying',

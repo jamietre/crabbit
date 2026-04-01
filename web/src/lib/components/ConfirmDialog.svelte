@@ -9,9 +9,20 @@
 </script>
 
 {#if open}
-  <div class="overlay" on:click={onCancel}>
-    <div class="dialog" on:click|stopPropagation>
-      <h3>{title}</h3>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="overlay"
+    role="presentation"
+    on:click={onCancel}
+    on:keydown={(e) => e.key === 'Escape' && onCancel()}
+  >
+    <div class="dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="confirm-dialog-title"
+      on:click|stopPropagation
+      on:keydown|stopPropagation
+    >
+      <h3 id="confirm-dialog-title">{title}</h3>
       {#if message}<p>{message}</p>{/if}
       <div class="actions">
         <button on:click={onCancel}>Cancel</button>

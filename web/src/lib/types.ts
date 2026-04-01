@@ -1,6 +1,7 @@
 // web/src/lib/types.ts
 
 export type TaskStatus =
+  | 'queued'
   | 'pending'
   | 'in_progress'
   | 'retrying'
@@ -17,6 +18,10 @@ export interface Repo {
   name: string;
   enabled: boolean;
   label_filter: string | null;
+  labels_require: string[];
+  labels_ignore: string[];
+  labels_prioritize: string[];
+  completion_prompt: string | null;
   created_at: number;
 }
 
@@ -28,6 +33,9 @@ export interface Task {
   issue_url: string;
   issue_body: string;
   status: TaskStatus;
+  task_type: string;
+  issue_labels: string[];
+  is_prioritized: boolean;
   pr_url: string | null;
   pr_number: number | null;
   error_message: string | null;
@@ -58,6 +66,7 @@ export interface AgentState {
   current_task_id: number | null;
   usage_note: string | null;
   usage_pct_7d: number | null;
+  usage_pct_5h: number | null;
   usage_reset_at: number | null;
 }
 
@@ -78,9 +87,16 @@ export interface ClaudeSettings {
   extra_flags: string[];
 }
 
+export interface ClaudeAuthCheckStatus {
+  status: 'ok' | 'expired' | 'unknown';
+  checked_at: number | null;
+  error: string | null;
+}
+
 export interface ClaudeAuthStatus {
   configured: boolean;
   updated_at: number | null;
+  check: ClaudeAuthCheckStatus;
 }
 
 export interface Prompt {
@@ -100,4 +116,10 @@ export interface NextIssueResponse {
   issue_title: string;
   issue_url: string;
   issue_body: string;
+}
+
+export interface SyncResult {
+  created: number;
+  updated: number;
+  closed: number;
 }
