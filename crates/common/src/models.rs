@@ -222,6 +222,37 @@ pub struct UpdateClaudeSettingsRequest {
     pub extra_flags: Option<Vec<String>>,
 }
 
+// ── Prompts ──────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Prompt {
+    pub id: i64,
+    pub category: String,
+    pub label: String,
+    pub name: String,
+    pub content: String,
+    pub enabled: bool,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreatePromptRequest {
+    pub category: String,
+    pub label: Option<String>,
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdatePromptRequest {
+    pub category: Option<String>,
+    pub label: Option<String>,
+    pub name: Option<String>,
+    pub content: Option<String>,
+    pub enabled: Option<bool>,
+}
+
 // ── Next Issue ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

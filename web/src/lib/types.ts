@@ -83,6 +83,17 @@ export interface ClaudeAuthStatus {
   updated_at: number | null;
 }
 
+export interface Prompt {
+  id: number;
+  category: string;
+  label: string;
+  name: string;
+  content: string;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+}
+
 export interface NextIssueResponse {
   repo_id: number;
   issue_number: number;

@@ -10,6 +10,7 @@ import type {
   ClaudeSettings,
   ClaudeAuthStatus,
   NextIssueResponse,
+  Prompt,
 } from './types';
 
 const BASE = '/api/v1';
@@ -91,6 +92,16 @@ export const settings = {
 export const claudeAuth = {
   status: () => request<ClaudeAuthStatus>('GET', '/claude-auth/status'),
   clear: () => request<void>('DELETE', '/claude-auth/'),
+};
+
+// Prompts
+export const prompts = {
+  list: () => request<Prompt[]>('GET', '/prompts'),
+  create: (data: { category: string; label?: string; name: string; content: string }) =>
+    request<Prompt>('POST', '/prompts', data),
+  update: (id: number, patch: { category?: string; label?: string; name?: string; content?: string; enabled?: boolean }) =>
+    request<Prompt>('PUT', `/prompts/${id}`, patch),
+  delete: (id: number) => request<void>('DELETE', `/prompts/${id}`),
 };
 
 // GitHub Auth

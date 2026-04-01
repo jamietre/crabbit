@@ -77,3 +77,16 @@ CREATE TABLE IF NOT EXISTS claude_settings (
 );
 INSERT OR IGNORE INTO claude_settings(id) VALUES (1);
 
+CREATE TABLE IF NOT EXISTS prompts (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    category   TEXT    NOT NULL,
+    label      TEXT    NOT NULL DEFAULT '',
+    name       TEXT    NOT NULL,
+    content    TEXT    NOT NULL,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompts_category ON prompts(category);
+
