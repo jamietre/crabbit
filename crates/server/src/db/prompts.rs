@@ -48,6 +48,7 @@ pub fn get_prompt(conn: &Connection, id: i64) -> anyhow::Result<Option<Prompt>> 
     .context("get_prompt")
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn update_prompt(
     conn: &Connection,
     id: i64,
