@@ -1,10 +1,11 @@
 <script lang="ts">
-  import { repos as reposApi, sync as syncApi } from '$lib/api';
-  import type { Repo } from '$lib/types';
+  import { repos as reposApi, sync as syncApi, toolchains as toolchainsApi } from '$lib/api';
+  import type { Repo, Toolchain } from '$lib/types';
   import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
   import { onMount } from 'svelte';
 
   let repoList: Repo[] = [];
+  let toolchainOptions: Toolchain[] = [];
   let addInput = '';   // "owner/name" format
   let addError = '';
   let deleteTarget: Repo | null = null;
@@ -20,7 +21,17 @@
     saving: boolean;
   }> = {};
 
-  onMount(async () => { repoList = await reposApi.list(); });
+  onMount(async () => {
+    [repoList, toolchainOptions] = await Promise.all([
+      reposApi.list(),
+      toolchainsApi.list(),
+    ]);
+  });
+
+  async function updateToolchain(repo: Repo, toolchain: string | null) {
+    const updated = await reposApi.update(repo.id, { toolchain });
+    repoList = repoList.map(r => r.id === repo.id ? updated : r);
+  }
 
   async function addRepo() {
     addError = '';
@@ -169,6 +180,19 @@
               <span class="muted">No label filters</span>
             {/if}
           </div>
+
+          <div class="toolchain-row">
+            <span class="label-key">Toolchain:</span>
+            <select
+              value={repo.toolchain ?? ''}
+              on:change={e => updateToolchain(repo, (e.target as HTMLSelectElement).value || null)}
+            >
+              <option value="">None (base image)</option>
+              {#each toolchainOptions as tc}
+                <option value={tc.name}>{tc.display_name}</option>
+              {/each}
+            </select>
+          </div>
         {:else}
           {@const e = editing[repo.id]}
           <div class="edit-form">
@@ -238,6 +262,8 @@
   .repo-name a:hover { color: var(--color-accent); }
   .repo-actions { display: flex; align-items: center; gap: 8px; }
   .label-summary { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--color-text-muted); }
+  .toolchain-row { margin-top: 8px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .toolchain-row select { font-size: 12px; padding: 2px 4px; border: 1px solid var(--color-border); border-radius: 3px; background: var(--color-bg); color: var(--color-text); }
   .label-group { display: flex; gap: 4px; }
   .label-key { color: var(--color-accent); font-weight: 600; }
   .edit-form { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }

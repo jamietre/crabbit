@@ -22,6 +22,19 @@ export interface Repo {
   labels_ignore: string[];
   labels_prioritize: string[];
   completion_prompt: string | null;
+  toolchain: string | null;
+  created_at: number;
+}
+
+export interface Toolchain {
+  name: string;
+  display_name: string;
+  image: string;
+  image_status: 'not_pulled' | 'pulling' | 'available' | 'pull_failed' | 'pending' | 'building' | 'build_failed';
+  builtin: boolean;
+  install_steps: string[];
+  detection_markers: string[];
+  build_log: string | null;
   created_at: number;
 }
 

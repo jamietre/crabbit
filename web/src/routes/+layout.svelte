@@ -31,6 +31,7 @@
     { href: '/tasks', label: 'Tasks' },
     { href: '/repos', label: 'Repos' },
     { href: '/prompts', label: 'Prompts' },
+    { href: '/toolchains', label: 'Toolchains' },
     { href: '/settings', label: 'Settings' },
   ];
 
