@@ -240,6 +240,21 @@ fi
 export GH_TOKEN
 export GITHUB_TOKEN="$GH_TOKEN"  # gh CLI reads either
 
+# Determine if we need to work via a fork.
+# If the authenticated bot account is not the repo owner, we fork the repo so
+# we can push branches and open PRs without needing direct collaborator access.
+GH_LOGIN=$(printf '%s\n' "$AUTH_STATUS" | jq -r '.github_login // empty')
+FORK_OWNER="$REPO_OWNER"
+if [ -n "$GH_LOGIN" ] && [ "$GH_LOGIN" != "$REPO_OWNER" ]; then
+    FORK_OWNER="$GH_LOGIN"
+    log "Bot login ($GH_LOGIN) differs from repo owner ($REPO_OWNER) — will use fork ${FORK_OWNER}/${REPO_NAME}"
+    # Create the fork if it doesn't exist yet (idempotent, exits 0 if already forked)
+    GH_ERR="${WORKDIR}/gh-error.txt"
+    if ! gh repo fork "${REPO_OWNER}/${REPO_NAME}" --clone=false 2>"$GH_ERR"; then
+        log "WARNING: gh repo fork failed (may already exist): $(cat "$GH_ERR")"
+    fi
+fi
+
 # ── Step 7: Clone / update repo ───────────────────────────────────────────────
 
 REPO_DIR="${WORKDIR}/repos/${REPO_OWNER}/${REPO_NAME}"
@@ -257,23 +272,45 @@ _gh_auth_check() {
     fi
 }
 
+GH_ERR="${WORKDIR}/gh-error.txt"
 if [ -d "${REPO_DIR}/.git" ]; then
     log "Updating existing clone at ${REPO_DIR}..."
-    GH_ERR="${WORKDIR}/gh-error.txt"
-    if ! git -C "$REPO_DIR" fetch --quiet origin 2>"$GH_ERR"; then
-        _gh_auth_check "$GH_ERR"
+    if [ "$FORK_OWNER" != "$REPO_OWNER" ]; then
+        # Ensure upstream remote is set, then sync from it
+        git -C "$REPO_DIR" remote set-url upstream "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" 2>/dev/null \
+            || git -C "$REPO_DIR" remote add upstream "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" 2>/dev/null || true
+        if ! git -C "$REPO_DIR" fetch --quiet upstream 2>"$GH_ERR"; then
+            _gh_auth_check "$GH_ERR"
+        fi
+        git -C "$REPO_DIR" checkout --quiet main 2>/dev/null \
+            || git -C "$REPO_DIR" checkout --quiet master 2>/dev/null \
+            || true
+        git -C "$REPO_DIR" reset --quiet --hard upstream/HEAD 2>/dev/null || true
+    else
+        if ! git -C "$REPO_DIR" fetch --quiet origin 2>"$GH_ERR"; then
+            _gh_auth_check "$GH_ERR"
+        fi
+        git -C "$REPO_DIR" checkout --quiet main 2>/dev/null \
+            || git -C "$REPO_DIR" checkout --quiet master 2>/dev/null \
+            || true
+        git -C "$REPO_DIR" reset --quiet --hard origin/HEAD 2>/dev/null || true
     fi
-    git -C "$REPO_DIR" checkout --quiet main 2>/dev/null \
-        || git -C "$REPO_DIR" checkout --quiet master 2>/dev/null \
-        || true
-    git -C "$REPO_DIR" reset --quiet --hard origin/HEAD 2>/dev/null || true
 else
-    log "Cloning ${REPO_OWNER}/${REPO_NAME}..."
     mkdir -p "$(dirname "$REPO_DIR")"
-    GH_ERR="${WORKDIR}/gh-error.txt"
-    if ! gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
-        _gh_auth_check "$GH_ERR"
-        die "gh repo clone failed"
+    if [ "$FORK_OWNER" != "$REPO_OWNER" ]; then
+        log "Cloning fork ${FORK_OWNER}/${REPO_NAME}..."
+        if ! gh repo clone "${FORK_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
+            _gh_auth_check "$GH_ERR"
+            die "gh repo clone (fork) failed"
+        fi
+        # Add upstream so we can sync and so gh pr create targets the right repo
+        git -C "$REPO_DIR" remote add upstream "https://github.com/${REPO_OWNER}/${REPO_NAME}.git"
+    else
+        log "Cloning ${REPO_OWNER}/${REPO_NAME}..."
+        if ! gh repo clone "${REPO_OWNER}/${REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
+            _gh_auth_check "$GH_ERR"
+            die "gh repo clone failed"
+        fi
     fi
 fi
 
