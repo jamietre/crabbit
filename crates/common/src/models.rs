@@ -13,6 +13,7 @@ pub struct Repo {
     pub labels_ignore: Vec<String>,
     pub labels_prioritize: Vec<String>,
     pub completion_prompt: Option<String>,
+    pub toolchain: Option<String>,
     pub created_at: i64,
 }
 
@@ -35,6 +36,7 @@ pub struct UpdateRepoRequest {
     pub labels_ignore: Option<Vec<String>>,
     pub labels_prioritize: Option<Vec<String>>,
     pub completion_prompt: Option<Option<String>>, // Some(None) = clear it
+    pub toolchain: Option<Option<String>>,         // Some(None) = clear it
 }
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
@@ -279,6 +281,38 @@ pub struct UpdatePromptRequest {
     pub name: Option<String>,
     pub content: Option<String>,
     pub enabled: Option<bool>,
+}
+
+// ── Toolchains ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Toolchain {
+    pub name: String,
+    pub display_name: String,
+    pub image: String,
+    pub image_status: String, // "not_pulled"|"pulling"|"available"|"pull_failed"|"pending"|"building"|"build_failed"
+    pub builtin: bool,
+    pub install_steps: Vec<String>,
+    pub detection_markers: Vec<String>,
+    pub build_log: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateToolchainRequest {
+    pub name: String,
+    pub display_name: String,
+    pub install_steps: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateStepsRequest {
+    pub description: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GenerateStepsResponse {
+    pub steps: Vec<String>,
 }
 
 // ── Next Issue ───────────────────────────────────────────────────────────────

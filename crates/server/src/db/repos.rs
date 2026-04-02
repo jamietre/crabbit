@@ -3,7 +3,7 @@ use crabbit_common::Repo;
 use rusqlite::{params, Connection, OptionalExtension};
 
 const SELECT_COLS: &str =
-    "id, owner, name, enabled, label_filter, labels_require, labels_ignore, labels_prioritize, completion_prompt, created_at";
+    "id, owner, name, enabled, label_filter, labels_require, labels_ignore, labels_prioritize, completion_prompt, toolchain, created_at";
 
 #[allow(clippy::too_many_arguments)]
 pub fn insert_repo(
@@ -118,6 +118,15 @@ fn parse_json_array(s: Option<String>) -> Vec<String> {
     s.and_then(|v| serde_json::from_str(&v).ok()).unwrap_or_default()
 }
 
+pub fn set_repo_toolchain(conn: &Connection, id: i64, toolchain: Option<&str>) -> anyhow::Result<()> {
+    conn.execute(
+        "UPDATE repos SET toolchain = ?1 WHERE id = ?2",
+        params![toolchain, id],
+    )
+    .context("set_repo_toolchain")?;
+    Ok(())
+}
+
 fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
     Ok(Repo {
         id: row.get(0)?,
@@ -129,7 +138,8 @@ fn row_to_repo(row: &rusqlite::Row<'_>) -> rusqlite::Result<Repo> {
         labels_ignore: parse_json_array(row.get(6)?),
         labels_prioritize: parse_json_array(row.get(7)?),
         completion_prompt: row.get(8)?,
-        created_at: row.get(9)?,
+        toolchain: row.get(9)?,
+        created_at: row.get(10)?,
     })
 }
 

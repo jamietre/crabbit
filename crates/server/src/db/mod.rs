@@ -9,6 +9,7 @@ pub mod repos;
 pub mod settings;
 pub mod sync;
 pub mod tasks;
+pub mod toolchains;
 
 const SCHEMA: &str = include_str!("schema.sql");
 
