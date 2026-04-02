@@ -22,6 +22,7 @@ fn make_server() -> TestServer {
         claude_sync_secret: None,
         claude_credentials_path: None,
         claude_auth_startup_check: false,
+        claude_config_dir: "/tmp/.claude-test".into(),
     };
     let state = AppState::new(conn, config);
     TestServer::new(build_router(state)).unwrap()
