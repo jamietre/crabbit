@@ -9,6 +9,7 @@
   let saved = false;
   let error = '';
   let clearingAuth = false;
+  let checkingAuth = false;
 
   const MODELS = ['claude-sonnet-4-6', 'claude-opus-4-6', 'claude-haiku-4-5-20251001'];
   const EFFORTS = ['low', 'medium', 'high', 'max'];
@@ -25,9 +26,19 @@
     clearingAuth = true;
     try {
       await claudeAuthApi.clear();
-      claudeAuthStatus = { configured: false, updated_at: null };
+      claudeAuthStatus = { configured: false, updated_at: null, check: { status: 'unknown', checked_at: null, error: null } };
     } finally {
       clearingAuth = false;
+    }
+  }
+
+  async function checkClaudeAuth() {
+    checkingAuth = true;
+    try {
+      const result = await claudeAuthApi.check();
+      if (claudeAuthStatus) claudeAuthStatus = { ...claudeAuthStatus, check: result };
+    } finally {
+      checkingAuth = false;
     }
   }
 
@@ -68,12 +79,33 @@
         {#if claudeAuthStatus.configured}
           <span class="badge badge-ok">Synced</span>
           <span class="claude-auth-sub">Updated {formatTs(claudeAuthStatus.updated_at)}</span>
-          <button class="btn-link danger" on:click={clearClaudeAuth} disabled={clearingAuth}>
-            {clearingAuth ? 'Clearing…' : 'Clear'}
-          </button>
         {:else}
           <span class="badge badge-warn">Not configured</span>
           <span class="claude-auth-sub">Run <code>install-desktop-sync.sh</code> on your desktop to push credentials.</span>
+        {/if}
+      </div>
+      <div class="claude-auth-row" style="margin-top: 8px">
+        <span class="claude-auth-label">Auth status</span>
+        {#if claudeAuthStatus.check.status === 'ok'}
+          <span class="badge badge-ok">Verified</span>
+        {:else if claudeAuthStatus.check.status === 'expired'}
+          <span class="badge badge-error">Expired</span>
+        {:else}
+          <span class="badge badge-warn">Unknown</span>
+        {/if}
+        {#if claudeAuthStatus.check.checked_at}
+          <span class="claude-auth-sub">Checked {formatTs(claudeAuthStatus.check.checked_at)}</span>
+        {/if}
+        {#if claudeAuthStatus.check.error && claudeAuthStatus.check.status !== 'ok'}
+          <span class="claude-auth-sub error-text">{claudeAuthStatus.check.error}</span>
+        {/if}
+        <button class="btn-link" on:click={checkClaudeAuth} disabled={checkingAuth}>
+          {checkingAuth ? 'Checking…' : 'Check now'}
+        </button>
+        {#if claudeAuthStatus.configured}
+          <button class="btn-link danger" on:click={clearClaudeAuth} disabled={clearingAuth}>
+            {clearingAuth ? 'Clearing…' : 'Clear'}
+          </button>
         {/if}
       </div>
     </div>
@@ -179,6 +211,8 @@
   .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; }
   .badge-ok { background: color-mix(in srgb, var(--color-success) 15%, transparent); color: var(--color-success); }
   .badge-warn { background: color-mix(in srgb, var(--color-warning) 15%, transparent); color: var(--color-warning); }
+  .badge-error { background: color-mix(in srgb, var(--color-error) 15%, transparent); color: var(--color-error); }
+  .error-text { color: var(--color-error); }
   .btn-link { background: none; border: none; cursor: pointer; font-size: 12px; padding: 0; }
   .btn-link.danger { color: var(--color-error); }
   .btn-link:disabled { opacity: 0.5; cursor: not-allowed; }

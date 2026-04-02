@@ -10,6 +10,7 @@
   --color-error: #ef4444;
   --color-info: #3b82f6;
 
+  --status-queued: #8892a4;
   --status-pending: #6b7280;
   --status-in_progress: var(--color-info);
   --status-retrying: var(--color-warning);

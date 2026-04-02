@@ -12,8 +12,9 @@ pub fn insert_task(
     now: i64,
 ) -> anyhow::Result<i64> {
     conn.execute(
-        "INSERT INTO tasks (repo_id, issue_number, issue_title, issue_url, issue_body, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        "INSERT INTO tasks (repo_id, issue_number, issue_title, issue_url, issue_body,
+                            status, task_type, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'pending', 'github_issue', ?6, ?6)",
         params![repo_id, issue_number, issue_title, issue_url, issue_body, now],
     )
     .context("insert_task")?;
@@ -23,7 +24,8 @@ pub fn insert_task(
 pub fn get_task(conn: &Connection, id: i64) -> anyhow::Result<Option<Task>> {
     conn.query_row(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
+                status, task_type, issue_labels, is_prioritized,
+                pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks WHERE id = ?1",
         params![id],
@@ -36,7 +38,8 @@ pub fn get_task(conn: &Connection, id: i64) -> anyhow::Result<Option<Task>> {
 pub fn get_task_by_issue(conn: &Connection, repo_id: i64, issue_number: i64) -> anyhow::Result<Option<Task>> {
     conn.query_row(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
+                status, task_type, issue_labels, is_prioritized,
+                pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks WHERE repo_id = ?1 AND issue_number = ?2",
         params![repo_id, issue_number],
@@ -56,7 +59,8 @@ pub fn list_tasks(
     let status_str = status.map(|s| s.to_string());
     let mut stmt = conn.prepare(
         "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
-                status, pr_url, pr_number, error_message, claude_session_id, retry_count,
+                status, task_type, issue_labels, is_prioritized,
+                pr_url, pr_number, error_message, claude_session_id, retry_count,
                 created_at, updated_at, started_at, completed_at
          FROM tasks
          WHERE (?1 IS NULL OR status = ?1)
@@ -173,6 +177,28 @@ pub fn list_task_events(conn: &Connection, task_id: i64) -> anyhow::Result<Vec<T
         .collect()
 }
 
+/// Pick the highest-priority actionable task from the local queue.
+/// Priority order: retrying > pending > is_prioritized queued > queued (oldest first within tier).
+pub fn next_queued_task(conn: &Connection) -> anyhow::Result<Option<Task>> {
+    conn.query_row(
+        "SELECT id, repo_id, issue_number, issue_title, issue_url, issue_body,
+                status, task_type, issue_labels, is_prioritized,
+                pr_url, pr_number, error_message, claude_session_id, retry_count,
+                created_at, updated_at, started_at, completed_at
+         FROM tasks
+         WHERE status IN ('retrying', 'pending', 'queued')
+         ORDER BY
+           CASE status WHEN 'retrying' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END ASC,
+           is_prioritized DESC,
+           created_at ASC
+         LIMIT 1",
+        [],
+        row_to_task,
+    )
+    .optional()
+    .context("next_queued_task")
+}
+
 pub fn reset_in_progress_tasks(conn: &Connection) -> anyhow::Result<usize> {
     let n = conn.execute(
         "UPDATE tasks SET status = 'pending', updated_at = strftime('%s','now')
@@ -184,7 +210,11 @@ pub fn reset_in_progress_tasks(conn: &Connection) -> anyhow::Result<usize> {
 
 fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
     let status_str: String = row.get(6)?;
-    let status: TaskStatus = status_str.parse().unwrap_or(TaskStatus::Pending);
+    let status: TaskStatus = status_str.parse().unwrap_or(TaskStatus::Queued);
+    let labels_json: Option<String> = row.get(8)?;
+    let issue_labels: Vec<String> = labels_json
+        .and_then(|v| serde_json::from_str(&v).ok())
+        .unwrap_or_default();
     Ok(Task {
         id: row.get(0)?,
         repo_id: row.get(1)?,
@@ -193,15 +223,18 @@ fn row_to_task(row: &rusqlite::Row<'_>) -> rusqlite::Result<Task> {
         issue_url: row.get(4)?,
         issue_body: row.get(5)?,
         status,
-        pr_url: row.get(7)?,
-        pr_number: row.get(8)?,
-        error_message: row.get(9)?,
-        claude_session_id: row.get(10)?,
-        retry_count: row.get(11)?,
-        created_at: row.get(12)?,
-        updated_at: row.get(13)?,
-        started_at: row.get(14)?,
-        completed_at: row.get(15)?,
+        task_type: row.get::<_, Option<String>>(7)?.unwrap_or_else(|| "github_issue".into()),
+        issue_labels,
+        is_prioritized: row.get::<_, i64>(9)? != 0,
+        pr_url: row.get(10)?,
+        pr_number: row.get(11)?,
+        error_message: row.get(12)?,
+        claude_session_id: row.get(13)?,
+        retry_count: row.get(14)?,
+        created_at: row.get(15)?,
+        updated_at: row.get(16)?,
+        started_at: row.get(17)?,
+        completed_at: row.get(18)?,
     })
 }
 
@@ -213,7 +246,7 @@ mod tests {
 
     fn setup() -> (rusqlite::Connection, i64) {
         let conn = open_db(":memory:").unwrap();
-        let repo_id = insert_repo(&conn, "acme", "api", None, 1_700_000_000).unwrap();
+        let repo_id = insert_repo(&conn, "acme", "api", None, &[], &[], &[], None, 1_700_000_000).unwrap();
         (conn, repo_id)
     }
 
@@ -223,7 +256,7 @@ mod tests {
         let id = insert_task(&conn, repo_id, 42, "Fix bug", "https://gh/42", "body", 1_700_000_000).unwrap();
         let t = get_task(&conn, id).unwrap().unwrap();
         assert_eq!(t.issue_number, 42);
-        assert_eq!(t.status, TaskStatus::Pending);
+        assert_eq!(t.status, TaskStatus::Pending); // insert_task uses 'pending' explicitly
     }
 
     #[test]

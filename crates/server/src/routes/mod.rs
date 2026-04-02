@@ -7,6 +7,7 @@ pub mod claude_auth;
 pub mod prompts;
 pub mod repos;
 pub mod settings;
+pub mod sync;
 pub mod tasks;
 
 pub fn build_router(state: AppState) -> Router {
@@ -18,6 +19,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/claude-settings", settings::router())
         .nest("/claude-auth", claude_auth::router())
         .nest("/prompts", prompts::router())
+        .nest("/sync", sync::router())
         .with_state(state.clone());
 
     Router::new()
@@ -50,6 +52,7 @@ pub(crate) mod tests {
             agent_env: "/dev/null".into(),
             claude_sync_secret: None,
             claude_credentials_path: None,
+            claude_auth_startup_check: false,
         }
     }
 

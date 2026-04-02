@@ -9,8 +9,10 @@ import type {
   GitHubAuthStatus,
   ClaudeSettings,
   ClaudeAuthStatus,
+  ClaudeAuthCheckStatus,
   NextIssueResponse,
   Prompt,
+  SyncResult,
 } from './types';
 
 const BASE = '/api/v1';
@@ -40,8 +42,14 @@ export const repos = {
   list: () => request<Repo[]>('GET', '/repos'),
   create: (owner: string, name: string) =>
     request<Repo>('POST', '/repos', { owner, name }),
-  update: (id: number, patch: { enabled?: boolean; label_filter?: string | null }) =>
-    request<Repo>('PATCH', `/repos/${id}`, patch),
+  update: (id: number, patch: {
+    enabled?: boolean;
+    label_filter?: string | null;
+    labels_require?: string[];
+    labels_ignore?: string[];
+    labels_prioritize?: string[];
+    completion_prompt?: string | null;
+  }) => request<Repo>('PATCH', `/repos/${id}`, patch),
   delete: (id: number) => request<void>('DELETE', `/repos/${id}`),
 };
 
@@ -70,6 +78,13 @@ export const tasks = {
     payload: Record<string, unknown>
   ) => request<void>('POST', `/tasks/${id}/events`, { event_type, payload }),
   delete: (id: number) => request<void>('DELETE', `/tasks/${id}`),
+  run: (id: number) => request<{ spawned: boolean; task_id: number }>('POST', `/tasks/${id}/run`),
+};
+
+// Sync
+export const sync = {
+  all: () => request<SyncResult>('POST', '/sync', {}),
+  repo: (id: number) => request<SyncResult>('POST', `/sync/${id}`, {}),
 };
 
 // Agent
@@ -91,6 +106,7 @@ export const settings = {
 // Claude Auth (credential sync)
 export const claudeAuth = {
   status: () => request<ClaudeAuthStatus>('GET', '/claude-auth/status'),
+  check: () => request<ClaudeAuthCheckStatus>('POST', '/claude-auth/check'),
   clear: () => request<void>('DELETE', '/claude-auth/'),
 };
 

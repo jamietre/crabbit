@@ -33,76 +33,26 @@ async fn update_state(
 }
 
 async fn next_issue(State(s): State<AppState>) -> Result<Json<Option<NextIssueResponse>>, ApiError> {
-    use crabbit_common::TaskStatus;
-
-    // Get GitHub token
-    let encrypted_token = s.with_db(crate::db::auth::get_github_token)?;
-    let token = match encrypted_token {
-        None => return Ok(Json(None)),
-        Some(enc) => {
-            let key = s.config.encryption_key()
-                .map_err(ApiError::Internal)?;
-            crate::crypto::decrypt(&enc, &key)
-                .map_err(ApiError::Internal)?
-        }
-    };
-
-    let repos = s.with_db(crate::db::repos::list_enabled_repos)?;
-    if repos.is_empty() {
-        return Ok(Json(None));
-    }
-
-    let gh = crate::github::GitHubClient::from_token(token);
-
-    for repo in repos {
-        let issues = match gh
-            .list_open_issues(&repo.owner, &repo.name, repo.label_filter.as_deref())
-            .await
-        {
-            Ok(issues) => issues,
-            Err(e) if e.to_string().contains("GITHUB_AUTH_EXPIRED") => {
-                tracing::warn!("GitHub token expired — marking as expired");
-                s.with_db(crate::db::auth::expire_github_token)?;
-                return Ok(Json(None));
-            }
-            Err(e) => return Err(ApiError::Internal(e)),
-        };
-
-        for issue in issues {
-            let existing = s.with_db(|c| {
-                crate::db::tasks::get_task_by_issue(c, repo.id, issue.number)
-            })?;
-            match existing {
-                None => {
-                    return Ok(Json(Some(NextIssueResponse {
-                        repo_id: repo.id,
-                        repo_owner: repo.owner,
-                        repo_name: repo.name,
-                        issue_number: issue.number,
-                        issue_title: issue.title,
-                        issue_url: issue.html_url,
-                        issue_body: issue.body,
-                        existing_task_id: None,
-                    })));
-                }
-                Some(t) if t.status == TaskStatus::Pending || t.status == TaskStatus::Retrying => {
-                    return Ok(Json(Some(NextIssueResponse {
-                        repo_id: repo.id,
-                        repo_owner: repo.owner,
-                        repo_name: repo.name,
-                        issue_number: issue.number,
-                        issue_title: issue.title,
-                        issue_url: issue.html_url,
-                        issue_body: issue.body,
-                        existing_task_id: Some(t.id),
-                    })));
-                }
-                Some(_) => continue,
-            }
+    let task = s.with_db(crate::db::tasks::next_queued_task)?;
+    match task {
+        None => Ok(Json(None)),
+        Some(t) => {
+            let repo = s.with_db(|c| crate::db::repos::get_repo(c, t.repo_id))?
+                .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("task has missing repo {}", t.repo_id)))?;
+            Ok(Json(Some(NextIssueResponse {
+                task_id: t.id,
+                repo_id: repo.id,
+                repo_owner: repo.owner,
+                repo_name: repo.name,
+                issue_number: t.issue_number,
+                issue_title: t.issue_title,
+                issue_url: t.issue_url,
+                issue_body: t.issue_body,
+                completion_prompt: repo.completion_prompt,
+                existing_task_id: Some(t.id),
+            })))
         }
     }
-
-    Ok(Json(None))
 }
 
 async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::IntoResponse, ApiError> {

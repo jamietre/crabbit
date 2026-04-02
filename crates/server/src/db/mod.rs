@@ -3,9 +3,11 @@ use rusqlite::Connection;
 
 pub mod agent;
 pub mod auth;
+pub mod claude_auth_check;
 pub mod prompts;
 pub mod repos;
 pub mod settings;
+pub mod sync;
 pub mod tasks;
 
 const SCHEMA: &str = include_str!("schema.sql");
@@ -26,7 +28,21 @@ fn run_schema(conn: &Connection) -> anyhow::Result<()> {
     let _ = conn.execute_batch("ALTER TABLE claude_settings ADD COLUMN usage_limit_pct REAL");
     let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN retry_count INTEGER NOT NULL DEFAULT 0");
     let _ = conn.execute_batch("ALTER TABLE agent_state ADD COLUMN usage_pct_7d REAL");
+    let _ = conn.execute_batch("ALTER TABLE agent_state ADD COLUMN usage_pct_5h REAL");
     let _ = conn.execute_batch("ALTER TABLE agent_state ADD COLUMN usage_reset_at INTEGER");
+    // Issue sync migrations
+    let _ = conn.execute_batch("ALTER TABLE repos ADD COLUMN labels_require    TEXT");
+    let _ = conn.execute_batch("ALTER TABLE repos ADD COLUMN labels_ignore     TEXT");
+    let _ = conn.execute_batch("ALTER TABLE repos ADD COLUMN labels_prioritize TEXT");
+    let _ = conn.execute_batch("ALTER TABLE repos ADD COLUMN completion_prompt TEXT");
+    let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN task_type      TEXT NOT NULL DEFAULT 'github_issue'");
+    let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN issue_labels   TEXT");
+    let _ = conn.execute_batch("ALTER TABLE tasks ADD COLUMN is_prioritized INTEGER NOT NULL DEFAULT 0");
+    // Migrate label_filter -> labels_require for existing repos
+    let _ = conn.execute_batch(
+        "UPDATE repos SET labels_require = json_array(label_filter) \
+         WHERE label_filter IS NOT NULL AND labels_require IS NULL"
+    );
     seed_default_prompts(conn);
     Ok(())
 }

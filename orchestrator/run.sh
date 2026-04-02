@@ -10,28 +10,18 @@ CONFIG="${CRABBIT_CONFIG:-$DEFAULT_CONFIG}"
 
 if [ ! -f "$CONFIG" ]; then
     echo "ERROR: config not found at $CONFIG" >&2
-    echo "Copy docs/agent-env-example.env to $CONFIG and fill it in." >&2
+    echo "Copy config/agent.env to $CONFIG and fill it in." >&2
     exit 1
 fi
 
 # shellcheck source=/dev/null
 . "$CONFIG"
 
-# If the agent env sets CLAUDE_CONFIG_DIR, export it and ensure the directory
-# exists so Claude does not load the user's personal settings.json / hooks.
+# If the agent env sets CLAUDE_CONFIG_DIR, ensure it exists and export it.
+# Credentials are written directly here by the sync daemon — no wipe needed.
+# Session history in projects/ is preserved so interrupted tasks can be resumed.
 if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
-    # Preserve .credentials.json so Claude can manage its own token rotation.
-    # Remove everything else so personal settings/hooks don't bleed in.
-    if [ -d "$CLAUDE_CONFIG_DIR" ] && [ -f "${CLAUDE_CONFIG_DIR}/.credentials.json" ]; then
-        _saved_creds=$(cat "${CLAUDE_CONFIG_DIR}/.credentials.json")
-        rm -rf "$CLAUDE_CONFIG_DIR"
-        mkdir -p "$CLAUDE_CONFIG_DIR"
-        printf '%s' "$_saved_creds" > "${CLAUDE_CONFIG_DIR}/.credentials.json"
-        unset _saved_creds
-    else
-        rm -rf "$CLAUDE_CONFIG_DIR"
-        mkdir -p "$CLAUDE_CONFIG_DIR"
-    fi
+    mkdir -p "$CLAUDE_CONFIG_DIR"
     CLAUDE_CONFIG_DIR="$(cd "$CLAUDE_CONFIG_DIR" && pwd)"
     export CLAUDE_CONFIG_DIR
 fi
@@ -148,27 +138,53 @@ fi
 log "Marking agent as running..."
 api_put "/agent/state" '{"status": "running"}' > /dev/null
 
-# ── Step 4: Fetch next issue ─────────────────────────────────────────────────
+# ── Step 4: Sync issues and fetch next task ───────────────────────────────────
 
-log "Fetching next issue..."
-NEXT_ISSUE=$(api_get "/agent/next-issue")
+COMPLETION_PROMPT=""
 
-if [ "$NEXT_ISSUE" = "null" ] || [ -z "$NEXT_ISSUE" ]; then
-    log "No pending issues. Marking idle and exiting."
-    api_put "/agent/state" '{"status": "idle"}' > /dev/null
-    _state_managed=1; exit 0
+if [ -n "${CRABBIT_TASK_ID:-}" ]; then
+    log "CRABBIT_TASK_ID=${CRABBIT_TASK_ID} — fetching specific task..."
+    TASK_RAW=$(api_get "/tasks/${CRABBIT_TASK_ID}" 2>&1) || die "GET /tasks/${CRABBIT_TASK_ID} failed (exit $?): ${TASK_RAW}"
+    log "DEBUG task raw (first 200): $(printf '%s' "$TASK_RAW" | head -c 200)"
+    TASK_ID="$CRABBIT_TASK_ID"
+    REPO_ID=$(printf '%s\n' "$TASK_RAW"      | jq -r '.repo_id')       || die "jq .repo_id failed"
+    ISSUE_NUMBER=$(printf '%s\n' "$TASK_RAW" | jq -r '.issue_number')  || die "jq .issue_number failed"
+    ISSUE_TITLE=$(printf '%s\n' "$TASK_RAW"  | jq -r '.issue_title')   || die "jq .issue_title failed"
+    ISSUE_URL=$(printf '%s\n' "$TASK_RAW"    | jq -r '.issue_url')     || die "jq .issue_url failed"
+    ISSUE_BODY=$(printf '%s\n' "$TASK_RAW"   | jq -r '.issue_body')    || die "jq .issue_body failed"
+    EXISTING_TASK_ID="$TASK_ID"
+    log "DEBUG repo_id=${REPO_ID} issue_number=${ISSUE_NUMBER}"
+
+    REPO_RAW=$(api_get "/repos/${REPO_ID}" 2>&1) || die "GET /repos/${REPO_ID} failed (exit $?): ${REPO_RAW}"
+    log "DEBUG repo raw (first 200): $(printf '%s' "$REPO_RAW" | head -c 200)"
+    REPO_OWNER=$(printf '%s\n' "$REPO_RAW"      | jq -r '.owner')
+    REPO_NAME=$(printf '%s\n' "$REPO_RAW"       | jq -r '.name')
+    COMPLETION_PROMPT=$(printf '%s\n' "$REPO_RAW" | jq -r '.completion_prompt // empty')
+    log "Task: ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} — ${ISSUE_TITLE}"
+else
+    log "Syncing issues from GitHub..."
+    api_post "/sync" "{}" > /dev/null 2>&1 || log "WARNING: sync failed (continuing)"
+
+    log "Fetching next issue..."
+    NEXT_ISSUE=$(api_get "/agent/next-issue")
+
+    if [ "$NEXT_ISSUE" = "null" ] || [ -z "$NEXT_ISSUE" ]; then
+        log "No pending issues. Marking idle and exiting."
+        api_put "/agent/state" '{"status": "idle"}' > /dev/null
+        _state_managed=1; exit 0
+    fi
+
+    REPO_ID=$(printf '%s\n' "$NEXT_ISSUE"      | jq -r '.repo_id')
+    REPO_OWNER=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.repo_owner')
+    REPO_NAME=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.repo_name')
+    ISSUE_NUMBER=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.issue_number')
+    ISSUE_TITLE=$(printf '%s\n' "$NEXT_ISSUE"  | jq -r '.issue_title')
+    ISSUE_URL=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.issue_url')
+    ISSUE_BODY=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.issue_body')
+    EXISTING_TASK_ID=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.existing_task_id // empty')
+    COMPLETION_PROMPT=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.completion_prompt // empty')
+    log "Next issue: ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} — ${ISSUE_TITLE}"
 fi
-
-REPO_ID=$(printf '%s\n' "$NEXT_ISSUE"      | jq -r '.repo_id')
-REPO_OWNER=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.repo_owner')
-REPO_NAME=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.repo_name')
-ISSUE_NUMBER=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.issue_number')
-ISSUE_TITLE=$(printf '%s\n' "$NEXT_ISSUE"  | jq -r '.issue_title')
-ISSUE_URL=$(printf '%s\n' "$NEXT_ISSUE"    | jq -r '.issue_url')
-ISSUE_BODY=$(printf '%s\n' "$NEXT_ISSUE"   | jq -r '.issue_body')
-EXISTING_TASK_ID=$(printf '%s\n' "$NEXT_ISSUE" | jq -r '.existing_task_id // empty')
-
-log "Next issue: ${REPO_OWNER}/${REPO_NAME}#${ISSUE_NUMBER} — ${ISSUE_TITLE}"
 
 # ── Step 5: Register or reuse task ───────────────────────────────────────────
 
@@ -371,31 +387,49 @@ OUTCOME_FILE="${WORKDIR}/outcome.json"
 SCREENSHOTS_DIR="${WORKDIR}/screenshots"
 TEMPLATE="${CRABBIT_ORCHESTRATOR_DIR}/prompt_template.md"
 
-if [ ! -f "$TEMPLATE" ]; then
-    die "prompt_template.md not found at $TEMPLATE"
-fi
-
 rm -f "$OUTCOME_FILE"
 rm -rf "$SCREENSHOTS_DIR"
 mkdir -p "$SCREENSHOTS_DIR"
 
-# Fetch prior context summary if this is a resumed task (existing_task_id was set)
-PRIOR_CONTEXT=""
+# Check for a saved Claude session ID to resume (set when EXISTING_TASK_ID is set)
+CLAUDE_RESUME_SESSION_ID=""
 if [ -n "$EXISTING_TASK_ID" ]; then
-    log "Fetching prior context for task #${TASK_ID}..."
-    TASK_EVENTS=$(api_get "/tasks/${TASK_ID}/events" 2>/dev/null || true)
-    if [ -n "$TASK_EVENTS" ]; then
-        # Extract the most recent context_summary event payload
+    log "Checking for resumable Claude session for task #${TASK_ID}..."
+    # GET /tasks/:id returns TaskWithEvents { task: {...}, events: [...] }
+    TASK_EVENTS=$(api_get "/tasks/${TASK_ID}" 2>/dev/null | jq -r '.events // []' 2>/dev/null || true)
+    if [ -n "$TASK_EVENTS" ] && [ "$TASK_EVENTS" != "[]" ]; then
+        CLAUDE_RESUME_SESSION_ID=$(printf '%s\n' "$TASK_EVENTS" \
+            | jq -r '[.[] | select(.event_type == "claude_session_start")] | last | .payload.session_id // empty' \
+            2>/dev/null || true)
+    fi
+    if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
+        log "Found Claude session ${CLAUDE_RESUME_SESSION_ID} — will resume."
+    else
+        log "No saved session found; will use full prompt."
+    fi
+fi
+
+if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
+    # Resume: write a minimal continuation message — Claude already has full context
+    printf 'Your previous session was interrupted. Please continue from where you left off.' \
+        > "$PROMPT_FILE"
+    log "Resume prompt written to ${PROMPT_FILE}"
+else
+    # Fresh start: render the full prompt template
+    if [ ! -f "$TEMPLATE" ]; then
+        die "prompt_template.md not found at $TEMPLATE"
+    fi
+
+    # Fetch prior context summary as fallback (context_summary written by Claude on pause)
+    PRIOR_CONTEXT=""
+    if [ -n "$EXISTING_TASK_ID" ] && [ -n "${TASK_EVENTS:-}" ]; then
         PRIOR_CONTEXT=$(printf '%s\n' "$TASK_EVENTS" \
             | jq -r '[.[] | select(.event_type == "context_summary")] | last | .payload.content // empty' \
             2>/dev/null || true)
+        if [ -n "$PRIOR_CONTEXT" ]; then
+            log "Prior context found ($(printf '%s' "$PRIOR_CONTEXT" | wc -c) chars). Injecting into prompt."
+        fi
     fi
-    if [ -n "$PRIOR_CONTEXT" ]; then
-        log "Prior context found ($(printf '%s' "$PRIOR_CONTEXT" | wc -c) chars). Injecting into prompt."
-    else
-        log "No prior context found for this task."
-    fi
-fi
 
 # Render template by substituting CRABBIT_* placeholders
 # Use Python for safe substitution (avoids sed issues with special chars in issue body)
@@ -452,7 +486,8 @@ with open("${PROMPT_FILE}", "w") as f:
     f.write(template)
 PYEOF
 
-log "Prompt written to ${PROMPT_FILE}"
+    log "Prompt written to ${PROMPT_FILE}"
+fi  # end: fresh start vs resume
 
 # ── Step 10: Build Claude flags ───────────────────────────────────────────────
 
@@ -466,18 +501,27 @@ if [ -n "$CLAUDE_BUDGET" ]; then
     CLAUDE_FLAGS="${CLAUDE_FLAGS} --max-budget-usd ${CLAUDE_BUDGET}"
 fi
 
-if [ -n "$CLAUDE_PROMPT_APPEND" ] || [ -n "$PROMPT_GUIDANCE" ]; then
-    APPEND_FILE="${WORKDIR}/system-append.txt"
-    # Write prompt guidance first, then user-configured append
-    : > "$APPEND_FILE"
-    if [ -n "$PROMPT_GUIDANCE" ]; then
-        printf '%s\n' "$PROMPT_GUIDANCE" >> "$APPEND_FILE"
-    fi
-    if [ -n "$CLAUDE_PROMPT_APPEND" ]; then
-        [ -n "$PROMPT_GUIDANCE" ] && printf '\n' >> "$APPEND_FILE"
-        printf '%s' "$CLAUDE_PROMPT_APPEND" >> "$APPEND_FILE"
-    fi
+# Combine prompt guidance (from prompts library), global system prompt append,
+# and per-repo completion prompt into a single --append-system-prompt file.
+APPEND_FILE="${WORKDIR}/system-append.txt"
+: > "$APPEND_FILE"
+if [ -n "${PROMPT_GUIDANCE:-}" ]; then
+    printf '%s\n' "$PROMPT_GUIDANCE" >> "$APPEND_FILE"
+fi
+if [ -n "$CLAUDE_PROMPT_APPEND" ]; then
+    [ -s "$APPEND_FILE" ] && printf '\n' >> "$APPEND_FILE"
+    printf '%s' "$CLAUDE_PROMPT_APPEND" >> "$APPEND_FILE"
+fi
+if [ -n "$COMPLETION_PROMPT" ]; then
+    [ -s "$APPEND_FILE" ] && printf '\n\n' >> "$APPEND_FILE"
+    printf '%s' "$COMPLETION_PROMPT" >> "$APPEND_FILE"
+fi
+if [ -s "$APPEND_FILE" ]; then
     CLAUDE_FLAGS="${CLAUDE_FLAGS} --append-system-prompt @${APPEND_FILE}"
+fi
+
+if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
+    CLAUDE_FLAGS="${CLAUDE_FLAGS} --resume ${CLAUDE_RESUME_SESSION_ID}"
 fi
 
 if [ "$ALLOW_BROWSER" = "false" ]; then
@@ -513,47 +557,118 @@ unset CLAUDE_CODE_SSE_PORT
 unset CLAUDE_CODE_RESTART_TOKEN
 unset CLAUDE_CODE_PIPE_TIMEOUT
 
-# Run Claude, capturing output to a file, then stream events from the log.
+# ── Usage polling loop (background) ──────────────────────────────────────────
+# Polls the Anthropic OAuth usage API while Claude is running and pushes
+# updated percentages to agent state. Interval configurable via
+# CLAUDE_USAGE_POLL_INTERVAL in agent.env (0 = disabled, default 60).
+USAGE_POLL_PID=""
+_POLL_INTERVAL="${CLAUDE_USAGE_POLL_INTERVAL:-60}"
+if [ "$_POLL_INTERVAL" -gt 0 ] && [ -n "${OAUTH_TOKEN:-}" ]; then
+    (
+        while true; do
+            sleep "$_POLL_INTERVAL"
+            _RESP=$(curl -sf --max-time 10 \
+                -H "Accept: application/json" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${OAUTH_TOKEN}" \
+                -H "anthropic-beta: oauth-2025-04-20" \
+                -H "User-Agent: crabbit/1.0" \
+                "https://api.anthropic.com/api/oauth/usage" 2>/dev/null || true)
+            if [ -n "$_RESP" ] && printf '%s\n' "$_RESP" | jq -e . > /dev/null 2>&1; then
+                _PCT_7D=$(printf '%s\n' "$_RESP" | jq -r '.seven_day.utilization // empty')
+                _PCT_5H=$(printf '%s\n' "$_RESP" | jq -r '.five_hour.utilization // empty')
+                _RESET=$(printf '%s\n' "$_RESP" | jq -r '.seven_day.resets_at // empty' \
+                    | xargs -I{} date -d "{}" +%s 2>/dev/null || true)
+                _BODY=$(jq -nc \
+                    --argjson pct7 "${_PCT_7D:-null}" \
+                    --argjson pct5 "${_PCT_5H:-null}" \
+                    --argjson reset "${_RESET:-null}" \
+                    '{usage_pct_7d: $pct7, usage_pct_5h: $pct5, usage_reset_at: $reset}')
+                curl -sf -X PUT \
+                    -H "Content-Type: application/json" \
+                    -d "$_BODY" \
+                    "${CRABBIT_API_URL}/api/v1/agent/state" > /dev/null 2>&1 || true
+            fi
+        done
+    ) &
+    USAGE_POLL_PID=$!
+fi
+
+# ── Real-time log streaming (background) ─────────────────────────────────────
+# Poll the JSONL log every 1s while Claude runs and post new lines as events.
+# This lets the task detail UI show progress live rather than only after completion.
+_STREAM_POS=0
+(
+    while true; do
+        sleep 1
+        _cur=$(wc -l < "$CLAUDE_LOG" 2>/dev/null || echo 0)
+        if [ "$_cur" -gt "$_STREAM_POS" ]; then
+            sed -n "$((_STREAM_POS + 1)),${_cur}p" "$CLAUDE_LOG" | while IFS= read -r _line; do
+                [ -n "$_line" ] || continue
+                curl -sf -X POST \
+                    -H "Content-Type: application/json" \
+                    -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$_line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
+                    "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
+            done
+            _STREAM_POS=$_cur
+        fi
+    done
+) &
+STREAM_PID=$!
+
+# Run Claude, capturing output to a file.
 # Using file redirect (not pipe) avoids pipefail/dash interaction issues.
 # shellcheck disable=SC2086
 CLAUDE_EXIT=0
 claude $CLAUDE_FLAGS < "$PROMPT_FILE" > "$CLAUDE_LOG" 2>"$CLAUDE_STDERR" || CLAUDE_EXIT=$?
 
-# Post each output line as a task event
-if [ -s "$CLAUDE_LOG" ]; then
-    while IFS= read -r line; do
-        curl -sf -X POST \
-            -H "Content-Type: application/json" \
-            -d "{\"event_type\": \"claude_output\", \"payload\": $(printf '%s\n' "$line" | jq -c '{line: .}' 2>/dev/null || echo '{"line": null}')}" \
-            "${CRABBIT_API_URL}/api/v1/tasks/${TASK_ID}/events" > /dev/null 2>&1 || true
-    done < "$CLAUDE_LOG"
+# Stop background loops now that Claude has exited.
+if [ -n "$USAGE_POLL_PID" ]; then
+    kill "$USAGE_POLL_PID" 2>/dev/null || true
+fi
+# Give the streaming loop one final iteration to catch the last lines, then stop it.
+sleep 2
+kill "$STREAM_PID" 2>/dev/null || true
+wait "$STREAM_PID" 2>/dev/null || true
+
+# Capture and store the Claude session ID from the init event (first line of stream-json output).
+# This lets us --resume the exact session if this task is interrupted and retried.
+CLAUDE_SESSION_ID=$(head -1 "$CLAUDE_LOG" | jq -r '.session_id // empty' 2>/dev/null || true)
+if [ -n "$CLAUDE_SESSION_ID" ]; then
+    api_post "/tasks/${TASK_ID}/events" \
+        "{\"event_type\": \"claude_session_start\", \"payload\": {\"session_id\": $(printf '%s\n' "$CLAUDE_SESSION_ID" | jq -Rs .)}}" \
+        > /dev/null 2>&1 || true
+    log "Stored Claude session ID: ${CLAUDE_SESSION_ID}"
 fi
 
 log "Claude exited with code ${CLAUDE_EXIT}"
 if [ -s "$CLAUDE_STDERR" ]; then
     STDERR_CONTENT=$(cat "$CLAUDE_STDERR")
     log "Claude stderr: ${STDERR_CONTENT}"
-    # Append stderr to the jsonl log so auth checks can scan it
-    printf '%s\n' "$STDERR_CONTENT" >> "$CLAUDE_LOG"
 fi
 
 # ── Step 11: Read outcome ─────────────────────────────────────────────────────
 
 # Check for Claude authentication failure before treating as a generic error.
-if [ "$CLAUDE_EXIT" -ne 0 ] || grep -qiE "authentication_failed|oauth token has expired|not logged in|failed to authenticate" "$CLAUDE_LOG" 2>/dev/null; then
-    if grep -qiE "oauth token has expired|token.*expired|expired.*token" "$CLAUDE_LOG" 2>/dev/null; then
+# IMPORTANT: only scan stderr — Claude's work output may mention "expired" or
+# "token" in code it writes, causing false positives if we scan the full log.
+if [ "$CLAUDE_EXIT" -ne 0 ] || grep -qiE "authentication_failed|oauth token has expired|not logged in|failed to authenticate" "$CLAUDE_STDERR" 2>/dev/null; then
+    if grep -qiE "oauth token has expired|token.*expired|expired.*token" "$CLAUDE_STDERR" 2>/dev/null; then
         log "Claude OAuth token has expired — re-sync credentials via the crabbit UI or run 'mise run sync:claude-creds'."
         api_patch "/tasks/${TASK_ID}" \
             '{"status": "failed", "error_message": "Claude OAuth token has expired — re-sync credentials via '\''mise run sync:claude-creds'\'' then retry."}' \
             > /dev/null
         api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        # Update auth check status so the UI reflects the expired state immediately.
+        curl -sf -X POST "${CRABBIT_API_URL}/api/v1/claude-auth/check" > /dev/null 2>&1 || true
         _state_managed=1; exit 0
-    elif grep -qiE "not authenticated|authentication required|please log in|invalid credentials|not logged in|failed to authenticate|authentication_failed" "$CLAUDE_LOG" 2>/dev/null; then
+    elif grep -qiE "not authenticated|authentication required|please log in|invalid credentials|not logged in|failed to authenticate|authentication_failed" "$CLAUDE_STDERR" 2>/dev/null; then
         log "Claude CLI is not authenticated."
         api_patch "/tasks/${TASK_ID}" \
             '{"status": "failed", "error_message": "Claude CLI not authenticated — push credentials via the desktop sync daemon or run '\''claude login'\'' on the server."}' \
             > /dev/null
         api_put "/agent/state" '{"status": "idle", "current_task_id": null}' > /dev/null
+        curl -sf -X POST "${CRABBIT_API_URL}/api/v1/claude-auth/check" > /dev/null 2>&1 || true
         _state_managed=1; exit 0
     fi
 fi

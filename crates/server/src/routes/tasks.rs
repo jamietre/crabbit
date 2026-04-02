@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/", get(list).post(create))
         .route("/:id", get(get_one).patch(update).delete(delete_one))
         .route("/:id/events", post(add_event))
+        .route("/:id/run", post(run_task))
 }
 
 async fn list(
@@ -113,6 +114,33 @@ async fn add_event(
     let event = events.into_iter().find(|e| e.id == event_id)
         .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("event not found after insert")))?;
     Ok((StatusCode::CREATED, Json(event)))
+}
+
+/// Manually trigger processing of a specific task.
+/// Returns 409 if the agent is already running.
+async fn run_task(
+    State(s): State<AppState>,
+    Path(id): Path<i64>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    s.with_db(|c| db::get_task(c, id))?.ok_or_else(|| ApiError::NotFound("task".into()))?;
+
+    let agent_state = s.with_db(crate::db::agent::get_agent_state)?;
+    if agent_state.status == crabbit_common::AgentStatus::Running {
+        return Err(ApiError::Conflict("agent is already running".into()));
+    }
+
+    let script = crate::expand_tilde(std::path::Path::new(&s.config.orchestrator_script));
+    let env_path = crate::expand_tilde(std::path::Path::new(&s.config.agent_env));
+
+    tokio::process::Command::new(&script)
+        .env("CRABBIT_CONFIG", &env_path)
+        .env("CRABBIT_TASK_ID", id.to_string())
+        .spawn()
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!(
+            "failed to spawn {}: {e}", script.display()
+        )))?;
+
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"spawned": true, "task_id": id}))))
 }
 
 fn unix_now() -> i64 {

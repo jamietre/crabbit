@@ -171,7 +171,7 @@ if [ ! -f "${CONFIG_DIR}/server.toml" ]; then
     sed \
         -e "s|USERNAME|${USER:-$(id -un)}|g" \
         -e "s|CHANGE_ME_GENERATE_WITH_OPENSSL|${ENCRYPTION_KEY}|g" \
-        "${REPO_DIR}/docs/server-toml-example.toml" \
+        "${REPO_DIR}/config/server.toml" \
         > "${CONFIG_DIR}/server.toml"
     ok "Created ${CONFIG_DIR}/server.toml (encryption key auto-generated)"
 else
@@ -180,7 +180,7 @@ fi
 
 # agent.env
 if [ ! -f "${CONFIG_DIR}/agent.env" ]; then
-    cp "${REPO_DIR}/docs/agent-env-example.env" "${CONFIG_DIR}/agent.env"
+    cp "${REPO_DIR}/config/agent.env" "${CONFIG_DIR}/agent.env"
     ok "Created ${CONFIG_DIR}/agent.env"
 else
     warn "agent.env already exists — not overwritten"

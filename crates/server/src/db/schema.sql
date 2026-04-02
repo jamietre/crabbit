@@ -2,12 +2,16 @@ PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
 CREATE TABLE IF NOT EXISTS repos (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    owner        TEXT    NOT NULL,
-    name         TEXT    NOT NULL,
-    enabled      INTEGER NOT NULL DEFAULT 1,
-    label_filter TEXT,
-    created_at   INTEGER NOT NULL,
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    owner             TEXT    NOT NULL,
+    name              TEXT    NOT NULL,
+    enabled           INTEGER NOT NULL DEFAULT 1,
+    label_filter      TEXT,
+    labels_require    TEXT,
+    labels_ignore     TEXT,
+    labels_prioritize TEXT,
+    completion_prompt TEXT,
+    created_at        INTEGER NOT NULL,
     UNIQUE(owner, name)
 );
 
@@ -18,7 +22,10 @@ CREATE TABLE IF NOT EXISTS tasks (
     issue_title       TEXT    NOT NULL,
     issue_url         TEXT    NOT NULL,
     issue_body        TEXT    NOT NULL,
-    status            TEXT    NOT NULL DEFAULT 'pending',
+    status            TEXT    NOT NULL DEFAULT 'queued',
+    task_type         TEXT    NOT NULL DEFAULT 'github_issue',
+    issue_labels      TEXT,
+    is_prioritized    INTEGER NOT NULL DEFAULT 0,
     pr_url            TEXT,
     pr_number         INTEGER,
     error_message     TEXT,
@@ -89,4 +96,12 @@ CREATE TABLE IF NOT EXISTS prompts (
 );
 
 CREATE INDEX IF NOT EXISTS idx_prompts_category ON prompts(category);
+
+CREATE TABLE IF NOT EXISTS claude_auth_check (
+    id         INTEGER PRIMARY KEY CHECK(id = 1),
+    status     TEXT NOT NULL DEFAULT 'unknown',
+    checked_at INTEGER,
+    error      TEXT
+);
+INSERT OR IGNORE INTO claude_auth_check(id) VALUES (1);
 

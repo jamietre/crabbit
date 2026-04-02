@@ -13,6 +13,6 @@ coverage
 .idea/
 .vscode/
 *.env
-!config/dev-agent.env
+!config/agent.env
 .dev/
 .config/

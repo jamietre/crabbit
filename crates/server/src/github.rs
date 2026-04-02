@@ -1,5 +1,9 @@
 use anyhow::Context;
+use crabbit_common::{Repo, SyncResult};
+use rusqlite::Connection;
 use serde::Deserialize;
+
+use crate::db::sync as sync_db;
 
 #[derive(Debug, Clone)]
 pub struct GitHubIssue {
@@ -7,6 +11,7 @@ pub struct GitHubIssue {
     pub title: String,
     pub body: String,
     pub html_url: String,
+    pub labels: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,14 +74,88 @@ impl GitHubClient {
             })
             .map(|i| GitHubIssue {
                 number: i.number,
-                title: i.title,
-                body: i.body.unwrap_or_default(),
-                html_url: i.html_url,
+                title: i.title.clone(),
+                body: i.body.clone().unwrap_or_default(),
+                html_url: i.html_url.clone(),
+                labels: i.labels.iter().map(|l| l.name.clone()).collect(),
             })
             .collect();
 
         Ok(issues)
     }
+
+    /// Fetch all open issues for a repo, applying labels_require and labels_ignore filters.
+    pub async fn list_issues_for_sync(
+        &self,
+        owner: &str,
+        repo: &str,
+        labels_require: &[String],
+        labels_ignore: &[String],
+    ) -> anyhow::Result<Vec<GitHubIssue>> {
+        // Pass the first require label to the API to reduce result set (API supports one label)
+        let api_label = labels_require.first().map(|s| s.as_str());
+        let all = self.list_open_issues(owner, repo, api_label).await?;
+
+        Ok(all.into_iter().filter(|issue| {
+            // Must have at least one require label (if configured)
+            if !labels_require.is_empty()
+                && !labels_require.iter().any(|req| issue.labels.contains(req)) {
+                return false;
+            }
+            // Must not have any ignore label
+            if labels_ignore.iter().any(|ign| issue.labels.contains(ign)) {
+                return false;
+            }
+            true
+        }).collect())
+    }
+}
+
+/// Fetch issues from GitHub for a repo (async part of sync — no DB access).
+pub async fn fetch_issues_for_sync(
+    client: &GitHubClient,
+    repo: &Repo,
+) -> anyhow::Result<Vec<GitHubIssue>> {
+    client
+        .list_issues_for_sync(&repo.owner, &repo.name, &repo.labels_require, &repo.labels_ignore)
+        .await
+}
+
+/// Write already-fetched issues to the local task queue (sync, takes &Connection).
+pub fn sync_issues_to_db(
+    conn: &Connection,
+    repo: &Repo,
+    issues: &[GitHubIssue],
+) -> anyhow::Result<SyncResult> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let open_numbers: Vec<i64> = issues.iter().map(|i| i.number).collect();
+    let mut result = SyncResult { created: 0, updated: 0, closed: 0 };
+
+    for issue in issues {
+        let labels_json = serde_json::to_string(&issue.labels).unwrap_or_else(|_| "[]".into());
+        let is_prioritized = repo.labels_prioritize.iter().any(|p| issue.labels.contains(p));
+
+        let (created, updated) = sync_db::upsert_issue_as_task(
+            conn,
+            repo.id,
+            issue.number,
+            &issue.title,
+            &issue.html_url,
+            &issue.body,
+            &labels_json,
+            is_prioritized,
+            now,
+        )?;
+        if created { result.created += 1; }
+        if updated { result.updated += 1; }
+    }
+
+    result.closed = sync_db::close_stale_queued_tasks(conn, repo.id, &open_numbers, now)?;
+    Ok(result)
 }
 
 #[derive(Deserialize)]

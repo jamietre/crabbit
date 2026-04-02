@@ -32,7 +32,18 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let state = crabbit_server::state::AppState::new(conn, config.clone());
-    let router = crabbit_server::routes::build_router(state);
+    let router = crabbit_server::routes::build_router(state.clone());
+
+    if config.claude_auth_startup_check {
+        let s = state.clone();
+        tokio::spawn(async move {
+            tracing::info!("startup: checking Claude auth...");
+            match crabbit_server::routes::claude_auth::run_check(&s).await {
+                Ok(r) => tracing::info!("startup: Claude auth check: {}", r.status),
+                Err(e) => tracing::warn!("startup: Claude auth check failed: {}", e),
+            }
+        });
+    }
 
     let listener = tokio::net::TcpListener::bind(&config.bind).await?;
     tracing::info!("listening on http://{}", config.bind);
