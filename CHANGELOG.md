@@ -13,3 +13,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Added
 - `claude_credentials_path` config field in `server.toml` — path to the credentials file the sync endpoint writes to (must match `CLAUDE_CONFIG_DIR` in `agent.env`).
+- **GitHub Actions CI** — `.github/workflows/ci.yml` runs on every push and on PRs to main; two jobs: `rust` (clippy `-D warnings` + `cargo test --workspace`) and `web` (pnpm install + build check), both with dependency caching.
