@@ -51,6 +51,12 @@ async fn remove(
     if tc.builtin {
         return Err(ApiError::BadRequest("cannot delete a built-in toolchain".into()));
     }
+    let repo_count = s.with_db(|c| db::count_repos_using(c, &name))?;
+    if repo_count > 0 {
+        return Err(ApiError::BadRequest(format!(
+            "toolchain is assigned to {repo_count} repo(s); reassign or remove them first"
+        )));
+    }
     s.with_db(|c| db::delete_toolchain(c, &name))?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -68,13 +74,21 @@ async fn pull(
     s.with_db(|c| db::set_image_status(c, &name, "pulling"))?;
 
     tokio::spawn(async move {
-        let ok = tokio::process::Command::new("docker")
-            .args(["pull", &tc.image])
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        let status = if ok { "available" } else { "pull_failed" };
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(600),
+            tokio::process::Command::new("docker")
+                .args(["pull", &tc.image])
+                .status(),
+        )
+        .await;
+        let status = match result {
+            Ok(Ok(s)) if s.success() => "available",
+            Err(_) => {
+                tracing::warn!("docker pull timed out for toolchain '{name}'");
+                "pull_failed"
+            }
+            _ => "pull_failed",
+        };
         let _ = s.with_db(|c| db::set_image_status(c, &name, status));
     });
 
@@ -134,19 +148,28 @@ async fn build(
             }
         };
 
-        // Stream stderr (docker build output) to DB line by line
+        // Stream stderr to DB in a separate task so it doesn't block the timeout select
         use tokio::io::{AsyncBufReadExt, BufReader};
         if let Some(stderr) = child.stderr.take() {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let _ = s.with_db(|c| db::append_build_log(c, &name, &line));
-            }
+            let s_log = s.clone();
+            let name_log = name.clone();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    let _ = s_log.with_db(|c| db::append_build_log(c, &name_log, &line));
+                }
+            });
         }
 
-        let status = if child.wait().await.map(|s| s.success()).unwrap_or(false) {
-            "available"
-        } else {
-            "build_failed"
+        let status = tokio::select! {
+            result = child.wait() => {
+                if result.map(|s| s.success()).unwrap_or(false) { "available" } else { "build_failed" }
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(600)) => {
+                tracing::warn!("docker build timed out for toolchain '{name}', killing process");
+                let _ = child.kill().await;
+                "build_failed"
+            }
         };
         let _ = s.with_db(|c| db::set_image_status(c, &name, status));
     });
@@ -247,6 +270,27 @@ mod tests {
     async fn build_builtin_returns_400() {
         let server = test_server();
         let r = server.post("/api/v1/toolchains/node/build").await;
+        assert_eq!(r.status_code(), 400);
+    }
+
+    #[tokio::test]
+    async fn delete_toolchain_used_by_repo_returns_400() {
+        let server = test_server();
+        // Create a custom toolchain
+        server.post("/api/v1/toolchains")
+            .json(&serde_json::json!({"name": "mytc", "display_name": "MyTC", "install_steps": ["echo hi"]}))
+            .await;
+        // Create a repo and assign the toolchain
+        server.post("/api/v1/repos")
+            .json(&serde_json::json!({"owner": "acme", "name": "app"}))
+            .await;
+        let repos: Vec<serde_json::Value> = server.get("/api/v1/repos").await.json();
+        let repo_id = repos[0]["id"].as_i64().unwrap();
+        server.patch(&format!("/api/v1/repos/{repo_id}"))
+            .json(&serde_json::json!({"toolchain": "mytc"}))
+            .await;
+        // Delete should be blocked
+        let r = server.delete("/api/v1/toolchains/mytc").await;
         assert_eq!(r.status_code(), 400);
     }
 

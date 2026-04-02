@@ -77,6 +77,15 @@ pub fn update_install_steps(conn: &Connection, name: &str, steps: &[String]) -> 
     Ok(())
 }
 
+pub fn count_repos_using(conn: &Connection, name: &str) -> anyhow::Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM repos WHERE toolchain = ?1",
+        params![name],
+        |row| row.get(0),
+    )
+    .context("count_repos_using")
+}
+
 pub fn delete_toolchain(conn: &Connection, name: &str) -> anyhow::Result<()> {
     conn.execute("DELETE FROM toolchains WHERE name = ?1", params![name])
         .context("delete_toolchain")?;

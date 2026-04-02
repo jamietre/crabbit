@@ -78,11 +78,18 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
     let gh_token = crate::crypto::decrypt(&enc_token, &key)
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("failed to decrypt GH token: {e}")))?;
 
-    // Determine Docker image from repo toolchain
+    // Determine Docker image from repo toolchain; require it to be available
     let image = if let Some(tc_name) = &repo.toolchain {
-        s.with_db(|c| crate::db::toolchains::get_toolchain(c, tc_name))?
-            .map(|tc| tc.image)
-            .unwrap_or_else(|| "ghcr.io/jamietre/crabbit-base:latest".into())
+        match s.with_db(|c| crate::db::toolchains::get_toolchain(c, tc_name))? {
+            Some(tc) if tc.image_status == "available" => tc.image,
+            Some(tc) => return Err(ApiError::BadRequest(format!(
+                "toolchain '{tc_name}' is not ready (status: {}); pull or build it first",
+                tc.image_status
+            ))),
+            None => return Err(ApiError::BadRequest(format!(
+                "toolchain '{tc_name}' not found"
+            ))),
+        }
     } else {
         "ghcr.io/jamietre/crabbit-base:latest".into()
     };
