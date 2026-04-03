@@ -54,6 +54,12 @@ pub enum TaskStatus {
     Skipped,
 }
 
+impl TaskStatus {
+    pub fn is_terminal(&self) -> bool {
+        matches!(self, TaskStatus::PrCreated | TaskStatus::Failed | TaskStatus::Skipped)
+    }
+}
+
 impl std::fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let s = serde_json::to_string(self).unwrap();

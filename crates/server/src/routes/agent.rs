@@ -106,6 +106,7 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
     }))?;
 
     let claude_config_dir = s.config.claude_config_dir.clone();
+    let task_volume = format!("crabbit-task-{}", task.id);
     let bind = s.config.bind.clone();
     let api_url = {
         let port = bind.rsplit(':').next().unwrap_or("3000");
@@ -131,7 +132,8 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
             "-e", &format!("CRABBIT_ISSUE_BODY={}", task.issue_body),
             "-e", &format!("CRABBIT_COMPLETION_PROMPT={completion_prompt}"),
             "-e", &format!("CRABBIT_SESSION_ID={session_id}"),
-            "-v", &format!("{claude_config_dir}:/root/.claude:ro"),
+            "-v", &format!("{task_volume}:/workspace"),
+            "-v", &format!("{claude_config_dir}:/creds:ro"),
             &image,
         ]);
 
@@ -140,6 +142,20 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
         // If docker itself failed (e.g. image not found), mark the task failed
         if result.map(|s| !s.success()).unwrap_or(true) {
             tracing::error!("docker run exited non-zero for task {}", task.id);
+        }
+
+        // Clean up the workspace volume if the task reached a terminal state.
+        // NeedsHuman is NOT terminal — the volume must be kept for session resume.
+        let is_terminal = s.with_db(|c| crate::db::tasks::get_task(c, task.id))
+            .ok()
+            .flatten()
+            .map(|t| t.status.is_terminal())
+            .unwrap_or(false);
+        if is_terminal {
+            let _ = tokio::process::Command::new("docker")
+                .args(["volume", "rm", &task_volume])
+                .status()
+                .await;
         }
 
         // Reset agent state regardless — the container updates task status via API

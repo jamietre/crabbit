@@ -15,12 +15,13 @@ set -euo pipefail
 
 export GITHUB_TOKEN="$GH_TOKEN"
 
-WORKDIR="$(mktemp -d /tmp/crabbit-XXXXXX)"
+# /workspace is a named Docker volume (crabbit-task-{id}) mounted by the host.
+# It persists across container runs for the same task, enabling session resume.
+WORKDIR="/workspace"
 REPO_DIR="${WORKDIR}/repo"
 OUTCOME_FILE="${WORKDIR}/outcome.json"
 SCREENSHOTS_DIR="${WORKDIR}/screenshots"
 CLAUDE_LOG="${WORKDIR}/claude.jsonl"
-SESSION_FILE="${WORKDIR}/session.json"
 mkdir -p "$SCREENSHOTS_DIR"
 
 log()  { echo "[crabbit] $*" >&2; }
@@ -45,12 +46,30 @@ fail_task() {
     exit 0
 }
 
-# ── Clone repo ────────────────────────────────────────────────────────────────
+# ── Inject credentials ────────────────────────────────────────────────────────
+# /creds is the host ~/.claude dir mounted read-only.
+# Copy auth files into the workspace volume each run (fresh, so revocation works).
+# The projects/ dir (session state) is NOT copied — it lives in the volume and
+# accumulates across runs, which is what makes --resume work.
 
-log "Cloning ${CRABBIT_REPO_OWNER}/${CRABBIT_REPO_NAME}..."
-GH_ERR="${WORKDIR}/gh-err.txt"
-if ! gh repo clone "${CRABBIT_REPO_OWNER}/${CRABBIT_REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
-    fail_task "Clone failed: $(cat "$GH_ERR")"
+mkdir -p "${WORKDIR}/.claude"
+for f in /creds/*.json /creds/*.yaml /creds/*.yml; do
+    [ -f "$f" ] || continue
+    cp "$f" "${WORKDIR}/.claude/$(basename "$f")"
+done
+export CLAUDE_CONFIG_DIR="${WORKDIR}/.claude"
+
+# ── Clone or update repo ──────────────────────────────────────────────────────
+
+if [ -d "${REPO_DIR}/.git" ]; then
+    log "Workspace found — fetching latest refs for ${CRABBIT_REPO_OWNER}/${CRABBIT_REPO_NAME}..."
+    git -C "$REPO_DIR" fetch origin 2>/dev/null || true
+else
+    log "Cloning ${CRABBIT_REPO_OWNER}/${CRABBIT_REPO_NAME}..."
+    GH_ERR="${WORKDIR}/gh-err.txt"
+    if ! gh repo clone "${CRABBIT_REPO_OWNER}/${CRABBIT_REPO_NAME}" "$REPO_DIR" -- --quiet 2>"$GH_ERR"; then
+        fail_task "Clone failed: $(cat "$GH_ERR")"
+    fi
 fi
 log "Repo ready at ${REPO_DIR}"
 
@@ -158,6 +177,11 @@ CLAUDE_ARGS=(
 )
 [ -n "$CLAUDE_BUDGET" ] && CLAUDE_ARGS+=(--max-budget-tokens "$CLAUDE_BUDGET")
 
+# Resume from prior session if available
+if [ -n "${CRABBIT_SESSION_ID:-}" ]; then
+    CLAUDE_ARGS+=(--resume "$CRABBIT_SESSION_ID")
+fi
+
 api_patch "/tasks/${CRABBIT_TASK_ID}" '{"status": "in_progress"}'
 
 # Stream output to log and forward to API in background
@@ -179,11 +203,6 @@ stream_output() {
 stream_output &
 STREAM_PID=$!
 trap 'kill "$STREAM_PID" 2>/dev/null || true' EXIT
-
-# Resume from prior session if available
-if [ -n "${CRABBIT_SESSION_ID:-}" ]; then
-    CLAUDE_ARGS+=(--resume "$CRABBIT_SESSION_ID")
-fi
 
 claude "${CLAUDE_ARGS[@]}" -p "$PROMPT" > "$CLAUDE_LOG" 2>&1 || true
 
