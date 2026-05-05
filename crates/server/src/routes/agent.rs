@@ -74,7 +74,7 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
     let enc_token = s.with_db(crate::db::auth::get_github_token)?
         .ok_or_else(|| ApiError::BadRequest("GitHub account not connected".into()))?;
     let key = s.config.encryption_key()
-        .map_err(|e| ApiError::Internal(e))?;
+        .map_err(ApiError::Internal)?;
     let gh_token = crate::crypto::decrypt(&enc_token, &key)
         .map_err(|e| ApiError::Internal(anyhow::anyhow!("failed to decrypt GH token: {e}")))?;
 
