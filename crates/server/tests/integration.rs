@@ -76,3 +76,10 @@ async fn full_lifecycle() {
     let state: serde_json::Value = r.json();
     assert_eq!(state["status"], "idle");
 }
+
+#[test]
+fn issue_1_doc_exists() {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let doc_path = manifest_dir.join("../../docs/test/issue-1.md");
+    assert!(doc_path.exists(), "docs/test/issue-1.md must exist");
+}
