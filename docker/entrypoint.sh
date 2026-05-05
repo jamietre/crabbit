@@ -53,10 +53,11 @@ fail_task() {
 # accumulates across runs, which is what makes --resume work.
 
 mkdir -p "${WORKDIR}/.claude"
-for f in /creds/*.json /creds/*.yaml /creds/*.yml; do
-    [ -f "$f" ] || continue
-    cp "$f" "${WORKDIR}/.claude/$(basename "$f")"
-done
+# .credentials.json holds the OAuth token — it's a dotfile so globs miss it
+cp /creds/.credentials.json "${WORKDIR}/.claude/.credentials.json" 2>/dev/null \
+    || log "Warning: no .credentials.json found in /creds — Claude may not authenticate"
+# settings.json carries model/effort preferences
+cp /creds/settings.json "${WORKDIR}/.claude/settings.json" 2>/dev/null || true
 export CLAUDE_CONFIG_DIR="${WORKDIR}/.claude"
 
 # ── Clone or update repo ──────────────────────────────────────────────────────
