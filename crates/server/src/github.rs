@@ -84,6 +84,29 @@ impl GitHubClient {
         Ok(issues)
     }
 
+    /// List filenames at the root of a repo — used for toolchain auto-detection.
+    /// Returns an empty vec (not an error) if the repo is private and the token lacks access.
+    pub async fn list_root_files(&self, owner: &str, repo: &str) -> anyhow::Result<Vec<String>> {
+        let url = format!("{}/repos/{}/{}/contents/", self.base_url, owner, repo);
+        let resp = self.client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.token))
+            .header("User-Agent", "crabbit/1.0")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+            .context("github request failed")?;
+
+        if !resp.status().is_success() {
+            return Ok(vec![]);
+        }
+
+        let items: Vec<serde_json::Value> = resp.json().await.unwrap_or_default();
+        Ok(items.iter()
+            .filter_map(|f| f["name"].as_str().map(String::from))
+            .collect())
+    }
+
     /// Fetch all open issues for a repo, applying labels_require and labels_ignore filters.
     pub async fn list_issues_for_sync(
         &self,

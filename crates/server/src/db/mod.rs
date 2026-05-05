@@ -9,6 +9,7 @@ pub mod repos;
 pub mod settings;
 pub mod sync;
 pub mod tasks;
+pub mod toolchains;
 
 const SCHEMA: &str = include_str!("schema.sql");
 
@@ -43,8 +44,39 @@ fn run_schema(conn: &Connection) -> anyhow::Result<()> {
         "UPDATE repos SET labels_require = json_array(label_filter) \
          WHERE label_filter IS NOT NULL AND labels_require IS NULL"
     );
+    // Toolchain migrations
+    let _ = conn.execute_batch("ALTER TABLE repos ADD COLUMN toolchain TEXT REFERENCES toolchains(name)");
     seed_default_prompts(conn);
+    seed_toolchains(conn);
     Ok(())
+}
+
+fn seed_toolchains(conn: &Connection) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    let known: &[(&str, &str, &str, &[&str])] = &[
+        ("node",   "Node.js / npm", "ghcr.io/jamietre/crabbit-node:latest",
+         &["package.json", ".nvmrc", ".node-version"]),
+        ("rust",   "Rust / Cargo",  "ghcr.io/jamietre/crabbit-rust:latest",
+         &["Cargo.toml"]),
+        ("python", "Python 3",      "ghcr.io/jamietre/crabbit-python:latest",
+         &["requirements.txt", "pyproject.toml", "setup.py"]),
+        ("go",     "Go",            "ghcr.io/jamietre/crabbit-go:latest",
+         &["go.mod"]),
+    ];
+
+    for (name, display, image, markers) in known {
+        let markers_json = serde_json::to_string(markers).unwrap_or_else(|_| "[]".into());
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO toolchains \
+             (name, display_name, image, image_status, builtin, install_steps, detection_markers, created_at) \
+             VALUES (?1, ?2, ?3, 'not_pulled', 1, '[]', ?4, ?5)",
+            rusqlite::params![name, display, image, markers_json, now],
+        );
+    }
 }
 
 fn seed_default_prompts(conn: &Connection) {
@@ -122,6 +154,7 @@ mod tests {
         assert!(tables.contains(&"github_auth".to_string()));
         assert!(tables.contains(&"claude_settings".to_string()));
         assert!(tables.contains(&"prompts".to_string()));
+        assert!(tables.contains(&"toolchains".to_string()));
     }
 
     #[test]

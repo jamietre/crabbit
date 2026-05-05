@@ -13,6 +13,7 @@ import type {
   NextIssueResponse,
   Prompt,
   SyncResult,
+  Toolchain,
 } from './types';
 
 const BASE = '/api/v1';
@@ -49,8 +50,21 @@ export const repos = {
     labels_ignore?: string[];
     labels_prioritize?: string[];
     completion_prompt?: string | null;
+    toolchain?: string | null;
   }) => request<Repo>('PATCH', `/repos/${id}`, patch),
   delete: (id: number) => request<void>('DELETE', `/repos/${id}`),
+};
+
+// Toolchains
+export const toolchains = {
+  list: () => request<Toolchain[]>('GET', '/toolchains'),
+  create: (name: string, display_name: string, install_steps: string[]) =>
+    request<Toolchain>('POST', '/toolchains', { name, display_name, install_steps }),
+  delete: (name: string) => request<void>('DELETE', `/toolchains/${name}`),
+  pull: (name: string) => request<void>('POST', `/toolchains/${name}/pull`),
+  build: (name: string) => request<void>('POST', `/toolchains/${name}/build`),
+  generateSteps: (description: string) =>
+    request<{ steps: string[] }>('POST', '/toolchains/generate-steps', { description }),
 };
 
 // Tasks

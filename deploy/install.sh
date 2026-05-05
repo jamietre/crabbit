@@ -9,15 +9,14 @@
 #   ./deploy/install.sh
 #
 # What this script does:
-#   1. Installs system packages (curl, git, jq, python3, node, build tools)
+#   1. Installs system packages (curl, git, jq, node, build tools)
 #   2. Installs the gh CLI from the official GitHub apt repository
 #   3. Installs the claude CLI via npm (for the orchestrator)
-#   4. Installs the Rust toolchain (rustup)
-#   5. Builds crabbit-server and installs it to ~/.local/bin
-#   6. Installs orchestrator scripts to ~/.config/crabbit/orchestrator
-#   7. Installs systemd user units
-#   8. Creates config files from templates (non-destructive — won't overwrite)
-#   9. Prints next steps
+#   4. Downloads the crabbit-server binary to ~/.local/bin
+#   5. Installs orchestrator scripts to ~/.config/crabbit/orchestrator
+#   6. Installs systemd user units
+#   7. Creates config files from templates (non-destructive — won't overwrite)
+#   8. Prints next steps
 #
 # Requirements:
 #   - Debian/Ubuntu (uses apt-get)
@@ -103,32 +102,15 @@ else
     ok "claude CLI already installed ($(claude --version 2>/dev/null || echo 'version unknown'))"
 fi
 
-# ── 4. Rust toolchain ─────────────────────────────────────────────────────────
+# ── 4. Download crabbit-server binary ─────────────────────────────────────────
 
-info "Installing Rust toolchain"
-
-if ! command -v cargo > /dev/null 2>&1; then
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-        | sh -s -- -y --default-toolchain stable --no-modify-path
-    # shellcheck source=/dev/null
-    . "${HOME}/.cargo/env"
-    ok "Rust installed ($(rustc --version))"
-else
-    # shellcheck source=/dev/null
-    . "${HOME}/.cargo/env" 2>/dev/null || true
-    ok "Rust already installed ($(rustc --version))"
-fi
-
-# ── 5. Build crabbit-server ────────────────────────────────────────────────────
-
-info "Building crabbit-server"
-
-cd "$REPO_DIR"
-cargo build --release -p crabbit-server
-ok "Build complete"
+info "Downloading crabbit-server"
 
 mkdir -p "$BIN_DIR"
-cp target/release/crabbit-server "$BIN_DIR/crabbit-server"
+curl -fsSL \
+    "https://github.com/jamietre/crabbit/releases/latest/download/crabbit-server" \
+    -o "$BIN_DIR/crabbit-server"
+chmod +x "$BIN_DIR/crabbit-server"
 ok "Installed crabbit-server → ${BIN_DIR}/crabbit-server"
 
 # Ensure BIN_DIR is on PATH for future sessions
@@ -137,7 +119,7 @@ if ! echo "${PATH}" | grep -q "${BIN_DIR}"; then
     warn "  export PATH=\"\${HOME}/.local/bin:\${PATH}\""
 fi
 
-# ── 6. Orchestrator scripts ───────────────────────────────────────────────────
+# ── 5. Orchestrator scripts ───────────────────────────────────────────────────
 
 info "Installing orchestrator"
 
@@ -147,7 +129,7 @@ cp "${REPO_DIR}/orchestrator/prompt_template.md" "${ORCHESTRATOR_DEST}/prompt_te
 chmod +x "${ORCHESTRATOR_DEST}/run.sh"
 ok "Orchestrator installed → ${ORCHESTRATOR_DEST}"
 
-# ── 7. Systemd units ──────────────────────────────────────────────────────────
+# ── 6. Systemd units ──────────────────────────────────────────────────────────
 
 info "Installing systemd user units"
 
@@ -159,7 +141,7 @@ done
 
 systemctl --user daemon-reload
 
-# ── 8. Config files ───────────────────────────────────────────────────────────
+# ── 7. Config files ───────────────────────────────────────────────────────────
 
 info "Setting up configuration"
 

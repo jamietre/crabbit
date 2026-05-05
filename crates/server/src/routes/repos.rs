@@ -42,6 +42,21 @@ async fn create(
         req.completion_prompt.as_deref(),
         now,
     ))?;
+    // Best-effort toolchain detection via GitHub API
+    if let Ok(Some(enc_token)) = s.with_db(crate::db::auth::get_github_token) {
+        if let Ok(key) = s.config.encryption_key() {
+            if let Ok(token) = crate::crypto::decrypt(&enc_token, &key) {
+                let gh = crate::github::GitHubClient::from_token(token);
+                if let Ok(files) = gh.list_root_files(&req.owner, &req.name).await {
+                    let toolchains = s.with_db(crate::db::toolchains::list_toolchains).unwrap_or_default();
+                    if let Some(tc_name) = detect_toolchain(&files, &toolchains) {
+                        let _ = s.with_db(|c| db::set_repo_toolchain(c, id, Some(&tc_name)));
+                    }
+                }
+            }
+        }
+    }
+
     let repo = s.with_db(|c| db::get_repo(c, id))?.ok_or_else(|| ApiError::Internal(anyhow::anyhow!("inserted but not found")))?;
     Ok((StatusCode::CREATED, Json(repo)))
 }
@@ -71,8 +86,22 @@ async fn update(
             req.completion_prompt.as_ref().map(|opt| opt.as_deref()),
         ))?;
     }
+    if let Some(toolchain) = req.toolchain {
+        s.with_db(|c| db::set_repo_toolchain(c, id, toolchain.as_deref()))?;
+    }
     let repo = s.with_db(|c| db::get_repo(c, id))?.unwrap();
     Ok(Json(repo))
+}
+
+fn detect_toolchain(root_files: &[String], toolchains: &[crabbit_common::Toolchain]) -> Option<String> {
+    for tc in toolchains {
+        for marker in &tc.detection_markers {
+            if root_files.iter().any(|f| f == marker) {
+                return Some(tc.name.clone());
+            }
+        }
+    }
+    None
 }
 
 async fn remove(

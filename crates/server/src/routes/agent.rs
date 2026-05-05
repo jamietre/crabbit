@@ -61,17 +61,116 @@ async fn trigger_run(State(s): State<AppState>) -> Result<impl axum::response::I
         return Err(ApiError::BadRequest("agent is already running".into()));
     }
 
-    let script = crate::expand_tilde(std::path::Path::new(&s.config.orchestrator_script));
-    let env_path = crate::expand_tilde(std::path::Path::new(&s.config.agent_env));
+    // Find the next task to work on
+    let task = match s.with_db(crate::db::tasks::next_queued_task)? {
+        None => return Ok((StatusCode::OK, Json(serde_json::json!({"status": "no_work"})))),
+        Some(t) => t,
+    };
 
-    tokio::process::Command::new(&script)
-        .env("CRABBIT_CONFIG", &env_path)
-        .spawn()
-        .map_err(|e| ApiError::Internal(anyhow::anyhow!(
-            "failed to spawn {}: {e}", script.display()
-        )))?;
+    let repo = s.with_db(|c| crate::db::repos::get_repo(c, task.repo_id))?
+        .ok_or_else(|| ApiError::Internal(anyhow::anyhow!("task {} has missing repo", task.id)))?;
 
-    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"spawned": true}))))
+    // Decrypt GH token
+    let enc_token = s.with_db(crate::db::auth::get_github_token)?
+        .ok_or_else(|| ApiError::BadRequest("GitHub account not connected".into()))?;
+    let key = s.config.encryption_key()
+        .map_err(|e| ApiError::Internal(e))?;
+    let gh_token = crate::crypto::decrypt(&enc_token, &key)
+        .map_err(|e| ApiError::Internal(anyhow::anyhow!("failed to decrypt GH token: {e}")))?;
+
+    // Determine Docker image from repo toolchain; require it to be available
+    let image = if let Some(tc_name) = &repo.toolchain {
+        match s.with_db(|c| crate::db::toolchains::get_toolchain(c, tc_name))? {
+            Some(tc) if tc.image_status == "available" => tc.image,
+            Some(tc) => return Err(ApiError::BadRequest(format!(
+                "toolchain '{tc_name}' is not ready (status: {}); pull or build it first",
+                tc.image_status
+            ))),
+            None => return Err(ApiError::BadRequest(format!(
+                "toolchain '{tc_name}' not found"
+            ))),
+        }
+    } else {
+        "ghcr.io/jamietre/crabbit-base:latest".into()
+    };
+
+    // Mark agent as running
+    s.with_db(|c| db::set_agent_state(c, &UpdateAgentStateRequest {
+        status: Some(AgentStatus::Running),
+        current_task_id: Some(task.id),
+        wake_at: None,
+        usage_note: None,
+        usage_pct_7d: None,
+        usage_pct_5h: None,
+        usage_reset_at: None,
+    }))?;
+
+    let claude_config_dir = s.config.claude_config_dir.clone();
+    let task_volume = format!("crabbit-task-{}", task.id);
+    let bind = s.config.bind.clone();
+    let api_url = {
+        let port = bind.rsplit(':').next().unwrap_or("3000");
+        format!("http://localhost:{port}")
+    };
+    let completion_prompt = repo.completion_prompt.clone().unwrap_or_default();
+    let session_id = task.claude_session_id.clone().unwrap_or_default();
+
+    let image_display = image.clone();
+    tokio::spawn(async move {
+        let mut cmd = tokio::process::Command::new("docker");
+        cmd.args([
+            "run", "--rm",
+            "--network", "host",
+            "-e", &format!("GH_TOKEN={gh_token}"),
+            "-e", &format!("CRABBIT_API_URL={api_url}"),
+            "-e", &format!("CRABBIT_TASK_ID={}", task.id),
+            "-e", &format!("CRABBIT_REPO_OWNER={}", repo.owner),
+            "-e", &format!("CRABBIT_REPO_NAME={}", repo.name),
+            "-e", &format!("CRABBIT_ISSUE_NUMBER={}", task.issue_number),
+            "-e", &format!("CRABBIT_ISSUE_TITLE={}", task.issue_title),
+            "-e", &format!("CRABBIT_ISSUE_URL={}", task.issue_url),
+            "-e", &format!("CRABBIT_ISSUE_BODY={}", task.issue_body),
+            "-e", &format!("CRABBIT_COMPLETION_PROMPT={completion_prompt}"),
+            "-e", &format!("CRABBIT_SESSION_ID={session_id}"),
+            "-v", &format!("{task_volume}:/workspace"),
+            "-v", &format!("{claude_config_dir}:/creds:ro"),
+            &image,
+        ]);
+
+        let result = cmd.status().await;
+
+        // If docker itself failed (e.g. image not found), mark the task failed
+        if result.map(|s| !s.success()).unwrap_or(true) {
+            tracing::error!("docker run exited non-zero for task {}", task.id);
+        }
+
+        // Clean up the workspace volume if the task reached a terminal state.
+        // NeedsHuman is NOT terminal — the volume must be kept for session resume.
+        let is_terminal = s.with_db(|c| crate::db::tasks::get_task(c, task.id))
+            .ok()
+            .flatten()
+            .map(|t| t.status.is_terminal())
+            .unwrap_or(false);
+        if is_terminal {
+            let _ = tokio::process::Command::new("docker")
+                .args(["volume", "rm", &task_volume])
+                .status()
+                .await;
+        }
+
+        // Reset agent state regardless — the container updates task status via API
+        let _ = s.with_db(|c| db::set_agent_state(c, &UpdateAgentStateRequest {
+            status: Some(AgentStatus::Idle),
+            current_task_id: None,
+            wake_at: None,
+            usage_note: None,
+            usage_pct_7d: None,
+            usage_pct_5h: None,
+            usage_reset_at: None,
+        }));
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(serde_json::json!({"spawned": true, "task_id": task.id, "image": image_display}))))
 }
 
 #[cfg(test)]

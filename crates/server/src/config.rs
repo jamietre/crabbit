@@ -35,6 +35,16 @@ pub struct Config {
     /// Disable in dev to avoid unnecessary API calls.
     #[serde(default)]
     pub claude_auth_startup_check: bool,
+
+    /// Path to the Claude config directory on the host, volume-mounted read-only
+    /// into task containers (default: ~/.claude)
+    #[serde(default = "default_claude_config_dir")]
+    pub claude_config_dir: String,
+}
+
+fn default_claude_config_dir() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    format!("{home}/.claude")
 }
 
 fn default_bind() -> String {

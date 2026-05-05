@@ -97,6 +97,18 @@ CREATE TABLE IF NOT EXISTS prompts (
 
 CREATE INDEX IF NOT EXISTS idx_prompts_category ON prompts(category);
 
+CREATE TABLE IF NOT EXISTS toolchains (
+    name               TEXT    PRIMARY KEY,
+    display_name       TEXT    NOT NULL,
+    image              TEXT    NOT NULL,
+    image_status       TEXT    NOT NULL DEFAULT 'not_pulled',
+    builtin            INTEGER NOT NULL DEFAULT 1,
+    install_steps      TEXT    NOT NULL DEFAULT '[]',
+    detection_markers  TEXT    NOT NULL DEFAULT '[]',
+    build_log          TEXT,
+    created_at         INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS claude_auth_check (
     id         INTEGER PRIMARY KEY CHECK(id = 1),
     status     TEXT NOT NULL DEFAULT 'unknown',

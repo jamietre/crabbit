@@ -9,6 +9,7 @@ pub mod repos;
 pub mod settings;
 pub mod sync;
 pub mod tasks;
+pub mod toolchains;
 
 pub fn build_router(state: AppState) -> Router {
     let api = Router::new()
@@ -20,6 +21,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest("/claude-auth", claude_auth::router())
         .nest("/prompts", prompts::router())
         .nest("/sync", sync::router())
+        .nest("/toolchains", toolchains::router())
         .with_state(state.clone());
 
     Router::new()
@@ -53,6 +55,7 @@ pub(crate) mod tests {
             claude_sync_secret: None,
             claude_credentials_path: None,
             claude_auth_startup_check: false,
+            claude_config_dir: "/tmp/.claude-test".into(),
         }
     }
 
